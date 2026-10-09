@@ -57,8 +57,15 @@ class OAuthWindow {
         webPreferences: {
           session: authSession,
           nodeIntegration: false,
-          contextIsolation: true
+          contextIsolation: true,
+          sandbox: true,
+          webviewTag: false
         }
+      });
+
+      // Security: Disallow child windows/popups from untrusted remote Amazon login flow
+      this.authWindow.webContents.setWindowOpenHandler(() => {
+        return { action: 'deny' };
       });
 
       let completed = false;

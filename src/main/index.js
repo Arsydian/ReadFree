@@ -42,9 +42,31 @@ function createWindow() {
       preload: path.join(__dirname, '../preload/preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false
+      sandbox: true,
+      webviewTag: false
     },
     show: false
+  });
+
+  // Security: Deny popups/child windows and route web URLs to external browser
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (url.startsWith('https://') || url.startsWith('http://')) {
+      shell.openExternal(url);
+    }
+    return { action: 'deny' };
+  });
+
+  // Security: Prevent in-window navigation away from local UI
+  mainWindow.webContents.on('will-navigate', (event, navigationUrl) => {
+    try {
+      const parsedUrl = new URL(navigationUrl);
+      if (parsedUrl.protocol !== 'file:') {
+        event.preventDefault();
+        shell.openExternal(navigationUrl);
+      }
+    } catch {
+      event.preventDefault();
+    }
   });
 
   mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'));
@@ -81,6 +103,22 @@ app.whenReady().then(() => {
 
   // Create UI Window
   createWindow();
+
+  // Global security listener for all WebContents (prevents <webview> misuse and unhandled popups)
+  app.on('web-contents-created', (_event, contents) => {
+    contents.on('will-attach-webview', (attachEvent, webPreferences) => {
+      // Disallow <webview> attachment and remove worker node integration if requested
+      delete webPreferences.nodeIntegrationInWorker;
+      attachEvent.preventDefault();
+    });
+
+    contents.setWindowOpenHandler(({ url }) => {
+      if (url.startsWith('https://') || url.startsWith('http://')) {
+        shell.openExternal(url);
+      }
+      return { action: 'deny' };
+    });
+  });
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
