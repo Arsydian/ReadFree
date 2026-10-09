@@ -35,6 +35,12 @@ class App {
   }
 
   async init() {
+    if (window.api?.appVersion) {
+      const versionBadge = document.querySelector('.titlebar-badge');
+      if (versionBadge) {
+        versionBadge.textContent = `v${window.api.appVersion}`;
+      }
+    }
     await this.updateAuthStatus();
     await this.settingsView.loadSettings();
     await this.libraryView.loadBooks();

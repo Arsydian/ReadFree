@@ -7,8 +7,11 @@
  */
 
 const { contextBridge, ipcRenderer } = require('electron');
+const pkg = require('../../package.json');
 
 contextBridge.exposeInMainWorld('api', {
+  appVersion: pkg.version,
+
   // Authentication & Session
   auth: {
     login: () => ipcRenderer.invoke('auth:login'),

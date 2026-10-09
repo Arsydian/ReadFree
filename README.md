@@ -3,7 +3,7 @@
 > **Clean, modern, glassmorphic Audible library backup & Audiobookshelf organizer.**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.0.0-cyan.svg)](package.json)
+[![Version](https://img.shields.io/badge/version-1.1.0-cyan.svg)](package.json)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-emerald.svg)](#)
 
 ---
@@ -90,8 +90,8 @@ npm run dist
 npm run dist:portable
 ```
 The output installer will be placed in the `dist/` directory:
-- `dist/ReadFree-Setup-1.0.0.exe` (Standalone setup installer)
-- `dist/ReadFree-1.0.0.exe` (Portable executable)
+- `dist/ReadFree-Setup-1.1.0.exe` (Standalone setup installer)
+- `dist/ReadFree-1.1.0.exe` (Portable executable)
 
 ### Running Unit Tests
 ```bash
