@@ -81,6 +81,18 @@ npm install
 npm start
 ```
 
+### Packaging a Single .exe Installer
+```bash
+# Build the single-file NSIS installer (.exe)
+npm run dist
+
+# Or build a standalone portable executable (.exe)
+npm run dist:portable
+```
+The output installer will be placed in the `dist/` directory:
+- `dist/ReadFree-Setup-1.0.0.exe` (Standalone setup installer)
+- `dist/ReadFree-1.0.0.exe` (Portable executable)
+
 ### Running Unit Tests
 ```bash
 npm test
