@@ -182,10 +182,6 @@ function registerIpcHandlers() {
 
   // --- Library Handlers ---
   ipcMain.handle('library:get-books', async (_event, filters) => {
-    // If database is empty, seed initial sample books for seamless first-run
-    if (libraryDB.getBooks().length === 0) {
-      deltaSync.seedDemoCatalogIfEmpty();
-    }
     return libraryDB.getBooks(filters);
   });
 

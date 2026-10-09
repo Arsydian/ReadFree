@@ -15,6 +15,55 @@ const path = require('path');
 const { app } = require('electron');
 
 class LibraryDB {
+  // Known legacy placeholder ASINs from initial demo seeds
+  static PLACEHOLDER_ASINS = new Set([
+    'B08G9W28Z1',
+    'B002V55724',
+    'B07978PHHB',
+    'B08FGF6HQB'
+  ]);
+
+  /**
+   * Identifies whether a book record is a placeholder or demo mock book.
+   * Ensures mock seed data can never be introduced or persisted.
+   * @param {Object} book 
+   * @returns {boolean}
+   */
+  static isPlaceholder(book) {
+    if (!book || typeof book !== 'object') return false;
+    if (book.isDemo === true || book.isPlaceholder === true) return true;
+
+    // Detect mock URLs or synthetic test directory paths
+    if (typeof book.pdfUrl === 'string' && book.pdfUrl.includes('example.com')) {
+      return true;
+    }
+    if (typeof book.m4bPath === 'string' && (book.m4bPath.includes('Brandon Sanderson\\The Stormlight Archive') || book.m4bPath.includes('example.com'))) {
+      return true;
+    }
+
+    // Detect known demo ASINs when populated with synthetic mock chapters or summaries
+    if (LibraryDB.PLACEHOLDER_ASINS.has(book.asin)) {
+      if (Array.isArray(book.chapters) && book.chapters.some(c => 
+        c && c.title && (
+          c.title === 'Chapter 1: Awakening' ||
+          c.title === 'Prelude to the Stormlight Archive' ||
+          c.title === 'Floor 1 - The Descent' ||
+          c.title === 'Episode 1: Sleep of the Just'
+        )
+      )) {
+        return true;
+      }
+      if (book.summary && (
+        book.summary.includes('The apocalypse will be televised!') ||
+        book.summary.includes('Lord Morpheus, is captured')
+      )) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
   /**
    * Initializes the database instance and loads persisted records.
    * @param {string} [customPath] Optional custom directory for storage (defaults to userData)
@@ -39,6 +88,7 @@ class LibraryDB {
     };
 
     this.load();
+    this.purgePlaceholders();
   }
 
   /**
@@ -50,7 +100,18 @@ class LibraryDB {
         const raw = fs.readFileSync(this.dbFile, 'utf8');
         const data = JSON.parse(raw);
         if (Array.isArray(data)) {
-          data.forEach(book => this.books.set(book.asin, book));
+          let hasPlaceholders = false;
+          data.forEach(book => {
+            if (LibraryDB.isPlaceholder(book)) {
+              hasPlaceholders = true;
+            } else {
+              this.books.set(book.asin, book);
+            }
+          });
+          if (hasPlaceholders) {
+            console.log('[LibraryDB] Purged legacy placeholder books from database file.');
+            this.saveBooks();
+          }
         }
       }
     } catch (err) {
@@ -66,6 +127,25 @@ class LibraryDB {
     } catch (err) {
       console.error('[LibraryDB] Error reading settings file:', err);
     }
+  }
+
+  /**
+   * Explicitly purges all placeholder and demo books from memory and disk.
+   * @returns {number} Count of purged books
+   */
+  purgePlaceholders() {
+    let purgedCount = 0;
+    for (const [asin, book] of this.books.entries()) {
+      if (LibraryDB.isPlaceholder(book)) {
+        this.books.delete(asin);
+        purgedCount++;
+      }
+    }
+    if (purgedCount > 0) {
+      this.saveBooks();
+      console.log(`[LibraryDB] Purged ${purgedCount} placeholder books from library.`);
+    }
+    return purgedCount;
   }
 
   /**
@@ -98,9 +178,17 @@ class LibraryDB {
 
   /**
    * Upserts a book into the database.
+   * Rejects and prevents placeholder / demo books.
    * @param {Object} book Book metadata
+   * @returns {boolean} True if upserted, false if blocked
    */
   upsertBook(book) {
+    if (!book || !book.asin) return false;
+    if (LibraryDB.isPlaceholder(book)) {
+      console.warn(`[LibraryDB] Blocked attempt to add placeholder book: ${book.asin} - ${book.title}`);
+      return false;
+    }
+
     const existing = this.books.get(book.asin) || {};
     const merged = {
       ...existing,
@@ -108,17 +196,25 @@ class LibraryDB {
       updatedAt: new Date().toISOString()
     };
     this.books.set(book.asin, merged);
+    return true;
   }
 
   /**
    * Bulk upserts books and writes to disk.
+   * Filters out any placeholder books.
    * @param {Array<Object>} bookList List of book records
    */
   bulkUpsert(bookList) {
+    if (!Array.isArray(bookList)) return;
+    let anySaved = false;
     for (const b of bookList) {
-      this.upsertBook(b);
+      if (this.upsertBook(b)) {
+        anySaved = true;
+      }
     }
-    this.saveBooks();
+    if (anySaved) {
+      this.saveBooks();
+    }
   }
 
   /**

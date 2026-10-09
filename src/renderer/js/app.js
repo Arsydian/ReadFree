@@ -133,7 +133,7 @@ class App {
         this.btnAuthAction.className = 'btn btn-glass btn-sm';
       } else {
         this.statusDot.className = 'status-dot';
-        this.statusText.textContent = 'Offline / Demo';
+        this.statusText.textContent = 'Not Connected';
         this.userNameLabel.textContent = 'Not Connected';
         this.userMarketLabel.textContent = 'Local Library';
         this.userAvatar.textContent = '?';
