@@ -154,6 +154,29 @@ function registerIpcHandlers() {
     return tokenManager.getSessionInfo();
   });
 
+  ipcMain.handle('auth:import-auth-json', async (_event, jsonContentOrPath) => {
+    try {
+      let content = jsonContentOrPath;
+      if (!content) {
+        const { dialog } = require('electron');
+        const res = await dialog.showOpenDialog(mainWindow, {
+          title: 'Import auth.json from audible-cli or Libation',
+          filters: [{ name: 'JSON Files', extensions: ['json'] }],
+          properties: ['openFile']
+        });
+        if (res.canceled || res.filePaths.length === 0) {
+          return { canceled: true };
+        }
+        content = res.filePaths[0];
+      }
+      const session = tokenManager.importAuthJson(content);
+      return { success: true, session };
+    } catch (err) {
+      console.error('[Main] Import auth.json error:', err);
+      return { success: false, error: err.message };
+    }
+  });
+
   // --- Library Handlers ---
   ipcMain.handle('library:get-books', async (_event, filters) => {
     // If database is empty, seed initial sample books for seamless first-run

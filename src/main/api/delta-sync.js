@@ -99,6 +99,14 @@ class DeltaSync {
         updated,
         isDemo: false
       };
+    } catch (err) {
+      if (options.onProgress) {
+        options.onProgress({
+          status: 'error',
+          message: `Sync failed: ${err.message}`
+        });
+      }
+      throw err;
     } finally {
       this.isSyncing = false;
     }

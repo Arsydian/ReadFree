@@ -13,7 +13,8 @@ contextBridge.exposeInMainWorld('api', {
   auth: {
     login: () => ipcRenderer.invoke('auth:login'),
     logout: () => ipcRenderer.invoke('auth:logout'),
-    getStatus: () => ipcRenderer.invoke('auth:get-status')
+    getStatus: () => ipcRenderer.invoke('auth:get-status'),
+    importAuthJson: (data) => ipcRenderer.invoke('auth:import-auth-json', data)
   },
 
   // Audible Library Management

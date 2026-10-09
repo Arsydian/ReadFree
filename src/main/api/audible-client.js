@@ -7,6 +7,8 @@
  * - Request content licensing, DRM vouchers, and direct download links
  */
 
+const { DeviceProfile } = require('../auth/device-profile');
+
 const MARKETPLACE_API_HOSTS = {
   us: 'https://api.audible.com',
   uk: 'https://api.audible.co.uk',
@@ -30,6 +32,49 @@ class AudibleClient {
   getBaseUrl() {
     const market = this.tokenManager.session?.marketplace || 'us';
     return MARKETPLACE_API_HOSTS[market] || MARKETPLACE_API_HOSTS.us;
+  }
+
+  /**
+   * Constructs authenticated request headers using ADP cryptographic signing
+   * if device credentials exist, or OAuth Bearer token as fallback.
+   * 
+   * @param {string} method HTTP method ('GET', 'POST')
+   * @param {string} fullUrl Complete URL with query parameters
+   * @param {string|Object} [body=''] Request payload
+   * @returns {Promise<Object>} Headers dictionary
+   */
+  async buildRequestHeaders(method, fullUrl, body = '') {
+    const profile = DeviceProfile.getProfile('android');
+    const adpToken = this.tokenManager.session?.adpToken;
+    const privateKeyPem = this.tokenManager.session?.devicePrivateKey;
+    const accessToken = await this.tokenManager.getValidAccessToken();
+
+    const headers = {
+      'User-Agent': profile.userAgent,
+      'Accept': 'application/json'
+    };
+
+    if (adpToken && privateKeyPem) {
+      const urlObj = new URL(fullUrl);
+      const pathWithQuery = urlObj.pathname + urlObj.search;
+      const { signatureHeader } = DeviceProfile.signAdpRequest({
+        method,
+        pathWithQuery,
+        body,
+        adpToken,
+        privateKeyPem
+      });
+
+      headers['x-adp-token'] = adpToken;
+      headers['x-adp-alg'] = 'SHA256withRSA:1.0';
+      headers['x-adp-signature'] = signatureHeader;
+    }
+
+    if (accessToken) {
+      headers['Authorization'] = `Bearer ${accessToken}`;
+    }
+
+    return headers;
   }
 
   /**
@@ -129,17 +174,14 @@ class AudibleClient {
    * @returns {Promise<Array<Object>>}
    */
   async fetchLibrary(options = {}) {
-    const token = await this.tokenManager.getValidAccessToken();
+    if (!this.tokenManager.isAuthenticated()) {
+      throw new Error('Not authenticated. Please sign in to your Audible account or import auth.json.');
+    }
+
     const pageSize = options.numResults || 50;
     const allBooks = [];
     let page = 1;
     let totalPages = 1;
-
-    // If no valid session token exists yet, return built-in catalog or throw
-    if (!token) {
-      throw new Error('Not authenticated. Please sign in to your Audible account.');
-    }
-
     const baseUrl = this.getBaseUrl();
 
     try {
@@ -154,18 +196,20 @@ class AudibleClient {
         const url = `${baseUrl}/1.0/library?${queryParams.toString()}`;
         console.log(`[AudibleClient] Fetching library page ${page}: ${url}`);
 
+        const headers = await this.buildRequestHeaders('GET', url);
+
         const response = await fetch(url, {
           method: 'GET',
-          headers: {
-            'Authorization': `Bearer ${token}`,
-            'User-Agent': 'Audible/3.84.0 (Android; 13)',
-            'Accept': 'application/json'
-          }
+          headers
         });
 
         if (!response.ok) {
           const errText = await response.text();
-          throw new Error(`Audible API returned ${response.status}: ${errText}`);
+          let errDetail = `Audible API returned ${response.status}: ${errText}`;
+          if (response.status === 401 || response.status === 403) {
+            errDetail += ' (Device authorization expired or invalid. Please re-authenticate or re-import auth.json)';
+          }
+          throw new Error(errDetail);
         }
 
         const data = await response.json();
@@ -200,25 +244,24 @@ class AudibleClient {
    * @param {string} asin 
    */
   async getDownloadStream(asin) {
-    const token = await this.tokenManager.getValidAccessToken();
     const baseUrl = this.getBaseUrl();
-
     const licenseUrl = `${baseUrl}/1.0/content/${asin}/licenserequest`;
+    const payload = {
+      quality: 'High',
+      response_groups: 'content_reference,content_url,offline_url,voucher'
+    };
+
+    const headers = await this.buildRequestHeaders('POST', licenseUrl, payload);
+    headers['Content-Type'] = 'application/json';
+
     const response = await fetch(licenseUrl, {
       method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${token}`,
-        'Content-Type': 'application/json',
-        'User-Agent': 'Audible/3.84.0 (Android; 13)'
-      },
-      body: JSON.stringify({
-        quality: 'High',
-        response_groups: 'content_reference,content_url,offline_url,voucher'
-      })
+      headers,
+      body: JSON.stringify(payload)
     });
 
     if (!response.ok) {
-      // If direct license endpoint requires mobile device signing, fallback to standard stream
+      // If direct license endpoint requires alternate profile, fallback to standard stream
       return {
         streamUrl: `https://content.audible.com/audio/${asin}.aax`,
         voucher: null,

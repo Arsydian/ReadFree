@@ -52,3 +52,30 @@ test('AudibleClient parseBookItem normalizes raw Audible API item', () => {
   assert.strictEqual(parsed.pdfUrl, 'https://example.com/companion.pdf');
   assert.strictEqual(parsed.status, 'ready');
 });
+
+test('AudibleClient buildRequestHeaders attaches valid ADP headers and modern User-Agent', async () => {
+  const crypto = require('crypto');
+  const { privateKey } = crypto.generateKeyPairSync('rsa', {
+    modulusLength: 2048,
+    privateKeyEncoding: { type: 'pkcs8', format: 'pem' }
+  });
+
+  const mockTokenManager = {
+    session: {
+      marketplace: 'us',
+      adpToken: 'test_adp_token_xyz',
+      devicePrivateKey: privateKey
+    },
+    getValidAccessToken: async () => 'test_access_token_123'
+  };
+
+  const client = new AudibleClient(mockTokenManager);
+  const headers = await client.buildRequestHeaders('GET', 'https://api.audible.com/1.0/library?num_results=50');
+
+  assert.strictEqual(headers['x-adp-token'], 'test_adp_token_xyz');
+  assert.strictEqual(headers['x-adp-alg'], 'SHA256withRSA:1.0');
+  assert.ok(headers['x-adp-signature'].includes(':'));
+  assert.strictEqual(headers['Authorization'], 'Bearer test_access_token_123');
+  assert.match(headers['User-Agent'], /Audible\/3\.95\.0/);
+});
+

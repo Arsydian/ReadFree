@@ -21,6 +21,7 @@ export class SettingsView {
     this.marketplaceSelect = document.getElementById('settingMarketplaceSelect');
     this.btnForceSync = document.getElementById('btnSettingsForceSync');
     this.btnResetDb = document.getElementById('btnResetDatabase');
+    this.btnImportAuth = document.getElementById('btnImportAuthJson');
 
     this.initEvents();
   }
@@ -72,6 +73,24 @@ export class SettingsView {
       this.app.updateAccountMarketplace(e.target.value);
       this.app.showToast(`Switched marketplace to ${e.target.options[e.target.selectedIndex].text}`, 'info');
     });
+
+    // Import auth.json
+    if (this.btnImportAuth) {
+      this.btnImportAuth.addEventListener('click', async () => {
+        try {
+          const res = await window.api.auth.importAuthJson();
+          if (res && res.success) {
+            this.app.showToast('Imported Audible session successfully!', 'success');
+            await this.app.checkAuthStatus();
+            await this.loadSettings();
+          } else if (res && !res.canceled) {
+            this.app.showToast(`Import failed: ${res.error || 'Unknown error'}`, 'error');
+          }
+        } catch (err) {
+          this.app.showToast(`Import error: ${err.message}`, 'error');
+        }
+      });
+    }
 
     // Full Re-Sync button
     this.btnForceSync.addEventListener('click', async () => {
