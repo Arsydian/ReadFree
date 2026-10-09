@@ -14,6 +14,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { DeviceProfile } = require('../auth/device-profile');
 
 class AbsOrganizer {
   /**
@@ -118,7 +119,8 @@ class AbsOrganizer {
 
     const coverPath = path.join(bookDir, 'cover.jpg');
     try {
-      const headers = userAgent ? { 'User-Agent': userAgent } : {};
+      const ua = userAgent || DeviceProfile.getProfile().userAgent;
+      const headers = { 'User-Agent': ua };
       const response = await fetch(coverUrl, { headers });
       if (!response.ok) return null;
       const buffer = await response.arrayBuffer();
@@ -148,7 +150,8 @@ class AbsOrganizer {
     const pdfPath = path.join(bookDir, safeFilename);
 
     try {
-      const headers = userAgent ? { 'User-Agent': userAgent } : {};
+      const ua = userAgent || DeviceProfile.getProfile().userAgent;
+      const headers = { 'User-Agent': ua };
       const response = await fetch(pdfUrl, { headers });
       if (!response.ok) return null;
       const buffer = await response.arrayBuffer();

@@ -137,6 +137,7 @@ class TokenManager {
       const response = await fetch(`https://api.amazon.${market.domain}/auth/token`, {
         method: 'POST',
         headers: {
+          'User-Agent': profile.userAgent,
           'Content-Type': 'application/x-www-form-urlencoded'
         },
         body: new URLSearchParams({
