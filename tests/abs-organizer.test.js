@@ -97,3 +97,16 @@ test('AbsOrganizer.writeAbsMetadata normalizes Audible millisecond chapters to s
 
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
+
+test('AbsOrganizer.saveCoverImage handles invalid URLs and null inputs safely without throwing', async () => {
+  const tmpDir = path.join(os.tmpdir(), `readfree_cover_test_${Date.now()}`);
+  fs.mkdirSync(tmpDir, { recursive: true });
+
+  const nullResult = await AbsOrganizer.saveCoverImage(tmpDir, null);
+  assert.strictEqual(nullResult, null);
+
+  const emptyResult = await AbsOrganizer.saveCoverImage(tmpDir, '');
+  assert.strictEqual(emptyResult, null);
+
+  fs.rmSync(tmpDir, { recursive: true, force: true });
+});

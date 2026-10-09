@@ -105,11 +105,45 @@ class TokenManager {
   }
 
   /**
+   * Automatically queries Amazon profile to backfill userId/name/email if missing
+   * from an earlier or imported session.
+   */
+  async ensureUserProfile() {
+    if (!this.session || this.session.userId) return;
+    try {
+      if (!this.session.accessToken) return;
+      const market = DeviceProfile.getMarketplace(this.session.marketplace || 'us');
+      const profile = DeviceProfile.getProfile();
+      const res = await fetch(`https://api.amazon.${market.domain}/user/profile`, {
+        headers: {
+          'Authorization': `bearer ${this.session.accessToken}`,
+          'User-Agent': profile.userAgent
+        }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.user_id) {
+          this.session.userId = data.user_id;
+          if (data.name && !this.session.userName) this.session.userName = data.name;
+          if (data.email && !this.session.userEmail) this.session.userEmail = data.email;
+          this.save();
+          console.log(`[TokenManager] Auto-populated user profile for account: ${data.user_id}`);
+        }
+      }
+    } catch (_) {}
+  }
+
+  /**
    * Retrieves active access token, refreshing if close to expiry.
    * @returns {Promise<string|null>}
    */
   async getValidAccessToken() {
     if (!this.session) return null;
+
+    // Auto-heal missing userId in background if needed
+    if (!this.session.userId) {
+      this.ensureUserProfile().catch(() => {});
+    }
 
     // Check if token expires within 5 minutes
     const now = Date.now();

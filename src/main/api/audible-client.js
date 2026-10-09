@@ -255,7 +255,11 @@ class AudibleClient {
       const session = this.tokenManager.session || {};
       const deviceType = session.deviceType || DeviceProfile.getProfile().deviceType;
       const deviceSerial = session.deviceSerial || this.tokenManager.getDeviceSerial();
-      const customerId = session.userId || session.customerId || '';
+      const customerId = session.userId || session.customerId;
+
+      if (!customerId) {
+        return null;
+      }
 
       const bufStr = `${deviceType}${deviceSerial}${customerId}${asin}`;
       const digest = crypto.createHash('sha256').update(bufStr, 'ascii').digest();
@@ -271,13 +275,19 @@ class AudibleClient {
       while (end > 0 && decrypted[end - 1] === 0) end--;
       const plaintext = decrypted.subarray(0, end).toString('utf8');
 
-      const parsed = JSON.parse(plaintext);
-      return {
-        key: parsed.key,
-        iv: parsed.iv
-      };
-    } catch (err) {
-      console.warn('[AudibleClient] Failed to decrypt AAXC voucher:', err.message);
+      try {
+        const parsed = JSON.parse(plaintext);
+        if (parsed.key && parsed.iv) {
+          return { key: parsed.key, iv: parsed.iv };
+        }
+      } catch (_) {
+        const match = plaintext.match(/^{\s*"key"\s*:\s*"([^"]+)"\s*,\s*"iv"\s*:\s*"([^"]+)"/);
+        if (match) {
+          return { key: match[1], iv: match[2] };
+        }
+      }
+      return null;
+    } catch (_) {
       return null;
     }
   }
@@ -339,13 +349,14 @@ class AudibleClient {
     const metadata = license.content_metadata || {};
     const ref = metadata.content_reference || {};
     const offlineUrl = metadata.content_url?.offline_url;
+    const isAaxc = license.drm_type === 'Aaxc' || ref.content_format === 'AAXC';
 
     if (!offlineUrl) {
       throw new Error(`No offline download URL returned in Audible content license for ASIN ${asin}`);
     }
 
     let voucher = license.voucher || null;
-    if (!voucher && license.license_response) {
+    if (!voucher && isAaxc && license.license_response) {
       voucher = this.decryptVoucher(license.license_response, asin);
     }
 

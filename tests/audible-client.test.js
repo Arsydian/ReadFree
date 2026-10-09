@@ -115,3 +115,23 @@ test('AudibleClient decryptVoucher decrypts AES-128-CBC license vouchers accurat
   assert.strictEqual(result.iv, 'fedcba9876543210fedcba9876543210');
 });
 
+test('AudibleClient decryptVoucher returns null safely when customerId is missing or voucher is non-AAXC', () => {
+  const mockTokenManager = {
+    session: {
+      marketplace: 'us',
+      deviceType: 'A2CZJZGLK2JJVM',
+      deviceSerial: 'TEST_SERIAL_1234'
+      // No userId / customerId
+    },
+    getDeviceSerial: () => 'TEST_SERIAL_1234'
+  };
+
+  const client = new AudibleClient(mockTokenManager);
+  assert.strictEqual(client.decryptVoucher('some_encrypted_string', 'B0TESTASIN1'), null);
+  assert.strictEqual(client.decryptVoucher(null, 'B0TESTASIN1'), null);
+
+  // Even with customerId, invalid or non-JSON payloads return null gracefully
+  mockTokenManager.session.userId = 'test_cust_id';
+  assert.strictEqual(client.decryptVoucher('bm90X3ZhbGlkX2Flcw==', 'B0TESTASIN1'), null);
+});
+

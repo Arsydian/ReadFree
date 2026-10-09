@@ -14,7 +14,12 @@
 
 const fs = require('fs');
 const path = require('path');
+const dns = require('dns');
 const { DeviceProfile } = require('../auth/device-profile');
+
+if (typeof dns.setDefaultResultOrder === 'function') {
+  dns.setDefaultResultOrder('ipv4first');
+}
 
 class AbsOrganizer {
   /**
@@ -106,6 +111,8 @@ class AbsOrganizer {
 
   /**
    * Downloads high-resolution cover artwork and saves as cover.jpg in the book folder.
+   * Includes timeout and automatic retry to handle transient network/DNS issues.
+   * 
    * @param {string} bookDir Target folder
    * @param {string} coverUrl Image URL
    * @param {string} [userAgent] Optional User-Agent header
@@ -118,18 +125,41 @@ class AbsOrganizer {
     }
 
     const coverPath = path.join(bookDir, 'cover.jpg');
-    try {
-      const ua = userAgent || DeviceProfile.getProfile().userAgent;
-      const headers = { 'User-Agent': ua };
-      const response = await fetch(coverUrl, { headers });
-      if (!response.ok) return null;
-      const buffer = await response.arrayBuffer();
-      fs.writeFileSync(coverPath, Buffer.from(buffer));
-      return coverPath;
-    } catch (err) {
-      console.warn(`[AbsOrganizer] Failed to save cover image for ${bookDir}:`, err);
-      return null;
+    const ua = userAgent || DeviceProfile.getProfile().userAgent;
+    const headers = { 'User-Agent': ua };
+
+    // Try up to 2 times with a 15-second timeout per attempt
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 15000);
+
+      try {
+        const response = await fetch(coverUrl, {
+          headers,
+          signal: controller.signal
+        });
+
+        clearTimeout(timer);
+
+        if (!response.ok) {
+          if (attempt === 2) return null;
+          continue;
+        }
+
+        const buffer = await response.arrayBuffer();
+        fs.writeFileSync(coverPath, Buffer.from(buffer));
+        return coverPath;
+      } catch (err) {
+        clearTimeout(timer);
+        if (attempt === 2) {
+          console.warn(`[AbsOrganizer] Failed to save cover image for ${bookDir}: ${err.message || err}`);
+          return null;
+        }
+        // Brief backoff before retry
+        await new Promise((res) => setTimeout(res, 500));
+      }
     }
+    return null;
   }
 
   /**

@@ -8,6 +8,12 @@
 const { app, BrowserWindow, ipcMain, dialog, shell, session } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const dns = require('dns');
+
+// Prioritize IPv4 DNS resolution to eliminate ConnectTimeoutError on dual-stack/broken-IPv6 networks
+if (typeof dns.setDefaultResultOrder === 'function') {
+  dns.setDefaultResultOrder('ipv4first');
+}
 
 const LibraryDB = require('./store/library-db');
 const TokenManager = require('./auth/token-manager');
