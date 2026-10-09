@@ -44,7 +44,7 @@ class AudibleClient {
    * @returns {Promise<Object>} Headers dictionary
    */
   async buildRequestHeaders(method, fullUrl, body = '') {
-    const profile = DeviceProfile.getProfile('android');
+    const profile = DeviceProfile.getProfile();
     const adpToken = this.tokenManager.session?.adpToken;
     const privateKeyPem = this.tokenManager.session?.devicePrivateKey;
     const accessToken = await this.tokenManager.getValidAccessToken();

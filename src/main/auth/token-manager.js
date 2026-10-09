@@ -132,15 +132,19 @@ class TokenManager {
     }
 
     try {
-      const response = await fetch('https://api.amazon.com/auth/o2/token', {
+      const profile = DeviceProfile.getProfile();
+      const market = DeviceProfile.getMarketplace(this.session.marketplace || 'us');
+      const response = await fetch(`https://api.amazon.${market.domain}/auth/token`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded'
         },
         body: new URLSearchParams({
-          app_name: 'Audible',
-          grant_type: 'refresh_token',
-          refresh_token: this.session.refreshToken
+          app_name: profile.appName,
+          app_version: profile.appVersion,
+          source_token: this.session.refreshToken,
+          requested_token_type: 'access_token',
+          source_token_type: 'refresh_token'
         })
       });
 
@@ -173,7 +177,7 @@ class TokenManager {
       deviceSerial: sessionData.deviceSerial || this.getDeviceSerial(),
       adpToken: sessionData.adpToken || this.session?.adpToken || null,
       devicePrivateKey: sessionData.devicePrivateKey || this.session?.devicePrivateKey || null,
-      deviceType: sessionData.deviceType || this.session?.deviceType || 'A10KISP2GWF0E4',
+      deviceType: sessionData.deviceType || this.session?.deviceType || DeviceProfile.getProfile().deviceType,
       accessToken: sessionData.accessToken || this.session?.accessToken || null,
       refreshToken: sessionData.refreshToken || this.session?.refreshToken || null,
       expiresAt: sessionData.expiresAt || (Date.now() + 3600000 * 24 * 30),

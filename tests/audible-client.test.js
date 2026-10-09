@@ -76,6 +76,6 @@ test('AudibleClient buildRequestHeaders attaches valid ADP headers and modern Us
   assert.strictEqual(headers['x-adp-alg'], 'SHA256withRSA:1.0');
   assert.ok(headers['x-adp-signature'].includes(':'));
   assert.strictEqual(headers['Authorization'], 'Bearer test_access_token_123');
-  assert.match(headers['User-Agent'], /Audible\/3\.95\.0/);
+  assert.match(headers['User-Agent'], /Audible\/3\.56\.2/);
 });
 

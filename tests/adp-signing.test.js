@@ -21,20 +21,62 @@ test('DeviceProfile generates valid device serial and PKCE parameters', () => {
 });
 
 test('DeviceProfile creates accurate Amazon MAP registration payload', () => {
+  const serial = 'ABC123DEF4567890ABC123DEF4567890';
   const payload = DeviceProfile.buildRegistrationPayload({
-    deviceSerial: 'ABC123DEF4567890ABC123DEF4567890',
+    deviceSerial: serial,
     codeVerifier: 'test-verifier-string',
     authCode: 'test-auth-code',
-    profileName: 'android'
+    marketplace: 'uk'
   });
 
-  assert.deepStrictEqual(payload.requested_token_type, ['bearer', 'mac_dms']);
-  assert.strictEqual(payload.registration_data.device_type, 'A10KISP2GWF0E4');
-  assert.strictEqual(payload.registration_data.app_name, 'com.audible.application');
-  assert.strictEqual(payload.registration_data.device_serial, 'ABC123DEF4567890ABC123DEF4567890');
+  const expectedClientId = Buffer.from(`${serial}#A2CZJZGLK2JJVM`).toString('hex');
+
+  assert.deepStrictEqual(payload.requested_token_type, ['bearer', 'mac_dms', 'website_cookies', 'store_authentication_cookie']);
+  assert.strictEqual(payload.cookies.domain, '.amazon.co.uk');
+  assert.strictEqual(payload.registration_data.device_type, 'A2CZJZGLK2JJVM');
+  assert.strictEqual(payload.registration_data.app_name, 'Audible');
+  assert.strictEqual(payload.registration_data.device_serial, serial);
+  assert.strictEqual(payload.auth_data.client_id, expectedClientId);
+  assert.strictEqual(payload.auth_data.client_domain, 'DeviceLegacy');
   assert.strictEqual(payload.auth_data.authorization_code, 'test-auth-code');
   assert.strictEqual(payload.auth_data.code_verifier, 'test-verifier-string');
   assert.strictEqual(payload.auth_data.code_algorithm, 'SHA-256');
+});
+
+test('DeviceProfile builds OAuth URL with oa2 namespace and hex device client_id', () => {
+  const serial = 'ABC123DEF4567890ABC123DEF4567890';
+  const url = new URL(DeviceProfile.buildOAuthUrl({ deviceSerial: serial, codeChallenge: 'challenge123', marketplace: 'us' }));
+  const p = url.searchParams;
+
+  assert.strictEqual(url.origin + url.pathname, 'https://www.amazon.com/ap/signin');
+  // Without this namespace Amazon ignores openid.oa2.* and returns no authorization code
+  assert.strictEqual(p.get('openid.ns.oa2'), 'http://www.amazon.com/ap/ext/oauth/2');
+  assert.strictEqual(p.get('openid.oa2.client_id'), `device:${Buffer.from(`${serial}#A2CZJZGLK2JJVM`).toString('hex')}`);
+  assert.strictEqual(p.get('openid.oa2.response_type'), 'code');
+  assert.strictEqual(p.get('openid.oa2.code_challenge'), 'challenge123');
+  assert.strictEqual(p.get('openid.oa2.code_challenge_method'), 'S256');
+  assert.strictEqual(p.get('openid.return_to'), 'https://www.amazon.com/ap/maplanding');
+  assert.strictEqual(p.get('openid.assoc_handle'), 'amzn_audible_ios_us');
+  assert.strictEqual(p.get('pageId'), 'amzn_audible_ios');
+  assert.strictEqual(p.get('marketPlaceId'), 'AF2M0KC94RCEA');
+});
+
+test('DeviceProfile.parseLoginRedirect only completes on real maplanding redirect', () => {
+  // Intermediate OTP page that references return_to must NOT complete the flow
+  const otpPage = 'https://www.amazon.com/ap/mfa?openid.return_to=https://www.amazon.com/ap/maplanding&arb=abc';
+  assert.deepStrictEqual(DeviceProfile.parseLoginRedirect(otpPage), { state: 'pending' });
+
+  const signin = 'https://www.amazon.com/ap/signin?openid.return_to=https%3A%2F%2Fwww.amazon.com%2Fap%2Fmaplanding';
+  assert.deepStrictEqual(DeviceProfile.parseLoginRedirect(signin), { state: 'pending' });
+
+  // Non-Amazon host with the same path is ignored
+  assert.deepStrictEqual(DeviceProfile.parseLoginRedirect('https://evil.example/ap/maplanding?openid.oa2.authorization_code=x'), { state: 'pending' });
+
+  const ok = 'https://www.amazon.co.uk/ap/maplanding?openid.oa2.authorization_code=ANcode123&openid.mode=id_res';
+  assert.deepStrictEqual(DeviceProfile.parseLoginRedirect(ok), { state: 'code', code: 'ANcode123' });
+
+  const cancelled = DeviceProfile.parseLoginRedirect('https://www.amazon.com/ap/maplanding?openid.mode=cancel');
+  assert.strictEqual(cancelled.state, 'error');
 });
 
 test('DeviceProfile cryptographically signs ADP requests using SHA256withRSA', () => {

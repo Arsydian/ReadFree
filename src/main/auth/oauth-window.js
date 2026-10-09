@@ -1,4 +1,4 @@
-/**
+﻿/**
  * ReadFree - Amazon / Audible OAuth Login Window
  * 
  * Manages an isolated Electron browser window for logging into Amazon/Audible.
@@ -9,18 +9,7 @@
  */
 
 const { BrowserWindow, session } = require('electron');
-const path = require('path');
 const { DeviceProfile } = require('./device-profile');
-
-// Audible Marketplace Domains & Client Parameters
-const MARKETPLACE_DOMAINS = {
-  us: { amazon: 'www.amazon.com', audible: 'api.audible.com', countryCode: 'US' },
-  uk: { amazon: 'www.amazon.co.uk', audible: 'api.audible.co.uk', countryCode: 'GB' },
-  ca: { amazon: 'www.amazon.ca', audible: 'api.audible.ca', countryCode: 'CA' },
-  de: { amazon: 'www.amazon.de', audible: 'api.audible.de', countryCode: 'DE' },
-  au: { amazon: 'www.amazon.com.au', audible: 'api.audible.com.au', countryCode: 'AU' },
-  fr: { amazon: 'www.amazon.fr', audible: 'api.audible.fr', countryCode: 'FR' }
-};
 
 class OAuthWindow {
   /**
@@ -34,38 +23,89 @@ class OAuthWindow {
   }
 
   /**
+   * Seeds the iOS app's initial cookies into the auth session to reduce CAPTCHAs.
+   * @param {Electron.Session} authSession
+   * @param {string} domain e.g. 'com'
+   */
+  async seedInitCookies(authSession, domain) {
+    const cookies = DeviceProfile.buildInitCookies();
+    for (const [name, value] of Object.entries(cookies)) {
+      try {
+        await authSession.cookies.set({
+          url: `https://www.amazon.${domain}`,
+          domain: `.amazon.${domain}`,
+          name,
+          value,
+          secure: true
+        });
+      } catch (err) {
+        console.warn(`[OAuthWindow] Could not set init cookie ${name}:`, err.message);
+      }
+    }
+  }
+
+  /**
+   * Exchanges the authorization code for device credentials via Amazon MAP.
+   * @returns {Promise<Object>} Parsed `response.success` object
+   */
+  async registerDevice({ authCode, codeVerifier, deviceSerial, marketplace }) {
+    const market = DeviceProfile.getMarketplace(marketplace);
+    const regPayload = DeviceProfile.buildRegistrationPayload({
+      deviceSerial,
+      codeVerifier,
+      authCode,
+      marketplace
+    });
+
+    const regEndpoint = `https://api.amazon.${market.domain}/auth/register`;
+    console.log(`[OAuthWindow] Sending registration request to ${regEndpoint}...`);
+
+    const regResponse = await fetch(regEndpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+      },
+      body: JSON.stringify(regPayload)
+    });
+
+    const rawBody = await regResponse.text();
+    let regData;
+    try {
+      regData = JSON.parse(rawBody);
+    } catch (_) {
+      throw new Error(`Device registration failed (${regResponse.status}): non-JSON response`);
+    }
+
+    if (!regResponse.ok || regData.response?.error) {
+      const errMsg = regData.response?.error?.message || regData.error_description || JSON.stringify(regData);
+      throw new Error(`Device registration failed (${regResponse.status}): ${errMsg}`);
+    }
+
+    const success = regData.response?.success;
+    if (!success?.tokens?.mac_dms?.adp_token || !success?.tokens?.mac_dms?.device_private_key) {
+      throw new Error('Amazon did not return required mac_dms ADP tokens or private key.');
+    }
+    return success;
+  }
+
+  /**
    * Launches the authentication browser window.
    * @param {string} [marketplace='us'] Selected marketplace
    * @returns {Promise<Object>} Session info upon successful auth
    */
   async openLogin(marketplace = 'us') {
-    const market = MARKETPLACE_DOMAINS[marketplace] || MARKETPLACE_DOMAINS.us;
+    const market = DeviceProfile.getMarketplace(marketplace);
+    const profile = DeviceProfile.getProfile();
     const deviceSerial = this.tokenManager.getDeviceSerial();
     const { codeVerifier, codeChallenge } = DeviceProfile.generatePkce();
+    const authUrl = DeviceProfile.buildOAuthUrl({ deviceSerial, codeChallenge, marketplace });
 
-    // Build the OAuth Login URL with modern PKCE parameters
-    const returnTo = `https://${market.amazon}/ap/maplanding`;
-    const authParams = new URLSearchParams({
-      'openid.oa2.response_type': 'code',
-      'openid.oa2.code_challenge': codeChallenge,
-      'openid.oa2.code_challenge_method': 'S256',
-      'openid.oa2.scope': 'device_auth_access',
-      'openid.oa2.client_id': `device:${deviceSerial}`,
-      'openid.return_to': returnTo,
-      'openid.assoc_handle': `amzn_audible_ios_${market.countryCode.toLowerCase()}`,
-      'openid.identity': 'http://specs.openid.net/auth/2.0/identifier_select',
-      'openid.claimed_id': 'http://specs.openid.net/auth/2.0/identifier_select',
-      'openid.mode': 'checkid_setup',
-      'openid.ns': 'http://specs.openid.net/auth/2.0',
-      'openid.pape.max_auth_age': '0'
-    });
-
-    const authUrl = `https://${market.amazon}/ap/signin?${authParams.toString()}`;
+    // Dedicated isolated session for the Amazon login flow
+    const authSession = session.fromPartition('persist:audible-auth');
+    await this.seedInitCookies(authSession, market.domain);
 
     return new Promise((resolve, reject) => {
-      // Create dedicated isolated session for clean login
-      const authSession = session.fromPartition('persist:audible-auth');
-
       this.authWindow = new BrowserWindow({
         width: 580,
         height: 720,
@@ -89,114 +129,84 @@ class OAuthWindow {
 
       let completed = false;
 
-      // Listen for navigation and redirection
-      const handleNavigation = async (url) => {
+      const finish = (err, result) => {
+        if (this.authWindow && !this.authWindow.isDestroyed()) {
+          this.authWindow.close();
+        }
+        if (err) reject(err); else resolve(result);
+      };
+
+      // Inspect every navigation; only the real /ap/maplanding landing completes the flow.
+      // Intermediate OTP / CVF / approval pages are left alone.
+      const handleNavigation = async (event, url) => {
         if (completed) return;
 
-        // Check if redirected to the maplanding authorization handler
-        if (url.includes('/ap/maplanding') || url.includes('openid.oa2.authorization_code')) {
-          completed = true;
-          try {
-            const urlObj = new URL(url);
-            const authCode = urlObj.searchParams.get('openid.oa2.authorization_code');
-            if (!authCode) {
-              throw new Error('No authorization code found in redirect URL.');
-            }
+        const result = DeviceProfile.parseLoginRedirect(url);
+        if (result.state === 'pending') return;
 
-            console.log('[OAuthWindow] Authorization code received. Initiating Amazon MAP device registration...');
+        completed = true;
+        // maplanding is not a real page (it 404s); stop the browser from loading it
+        if (event && typeof event.preventDefault === 'function') {
+          event.preventDefault();
+        }
 
-            const domainStr = `.${market.amazon.replace('www.', '')}`;
+        if (result.state === 'error') {
+          console.error('[OAuthWindow] Authentication error:', result.message);
+          finish(new Error(result.message));
+          return;
+        }
 
-            // Build registration payload for Amazon MAP
-            const regPayload = DeviceProfile.buildRegistrationPayload({
-              deviceSerial,
-              codeVerifier,
-              authCode,
-              profileName: 'android',
-              domain: domainStr
-            });
+        try {
+          console.log('[OAuthWindow] Authorization code received. Initiating Amazon MAP device registration...');
+          const success = await this.registerDevice({
+            authCode: result.code,
+            codeVerifier,
+            deviceSerial,
+            marketplace
+          });
 
-            // Execute Amazon MAP registration
-            const regEndpoint = 'https://api.amazon.com/auth/register';
-            console.log(`[OAuthWindow] Sending registration request to ${regEndpoint}...`);
+          const bearer = success.tokens.bearer;
+          const macDms = success.tokens.mac_dms;
+          const custInfo = success.extensions?.customer_info;
 
-            const regResponse = await fetch(regEndpoint, {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                'Accept': 'application/json'
-              },
-              body: JSON.stringify(regPayload)
-            });
+          console.log('[OAuthWindow] Device registration successful. Storing ADP session tokens...');
 
-            const regData = await regResponse.json();
+          this.tokenManager.setSession({
+            deviceSerial,
+            deviceType: profile.deviceType,
+            adpToken: macDms.adp_token,
+            devicePrivateKey: macDms.device_private_key,
+            accessToken: bearer?.access_token || null,
+            refreshToken: bearer?.refresh_token || null,
+            expiresAt: Date.now() + ((parseInt(bearer?.expires_in, 10) || 3600) * 1000),
+            marketplace,
+            userName: custInfo?.name || 'Audible Member'
+          });
 
-            if (!regResponse.ok || regData.response?.error) {
-              const errMsg = regData.response?.error?.message || regData.error_description || JSON.stringify(regData);
-              throw new Error(`Device registration failed (${regResponse.status}): ${errMsg}`);
-            }
-
-            const success = regData.response?.success;
-            const bearer = success?.tokens?.bearer;
-            const macDms = success?.tokens?.mac_dms;
-            const custInfo = success?.extensions?.customer_info;
-
-            if (!macDms?.adp_token || !macDms?.device_private_key) {
-              throw new Error('Amazon did not return required mac_dms ADP tokens or private key.');
-            }
-
-            console.log('[OAuthWindow] Device registration successful. Storing ADP session tokens...');
-
-            // Construct registered session credentials
-            const sessionData = {
-              deviceSerial,
-              adpToken: macDms.adp_token,
-              devicePrivateKey: macDms.device_private_key,
-              accessToken: bearer?.access_token || null,
-              refreshToken: bearer?.refresh_token || null,
-              expiresAt: Date.now() + ((parseInt(bearer?.expires_in, 10) || 3600) * 1000),
-              marketplace: marketplace,
-              userName: custInfo?.name || 'Audible Member',
-              activationBytes: '1a2b3c4d'
-            };
-
-            this.tokenManager.setSession(sessionData);
-
-            if (this.authWindow && !this.authWindow.isDestroyed()) {
-              this.authWindow.close();
-            }
-
-            resolve(this.tokenManager.getSessionInfo());
-          } catch (err) {
-            console.error('[OAuthWindow] Authentication error:', err);
-            if (this.authWindow && !this.authWindow.isDestroyed()) {
-              this.authWindow.close();
-            }
-            reject(err);
-          }
+          finish(null, this.tokenManager.getSessionInfo());
+        } catch (err) {
+          console.error('[OAuthWindow] Authentication error:', err);
+          finish(err);
         }
       };
 
-      this.authWindow.webContents.on('will-navigate', (_event, url) => {
-        handleNavigation(url);
-      });
-
-      this.authWindow.webContents.on('will-redirect', (_event, url) => {
-        handleNavigation(url);
-      });
+      this.authWindow.webContents.on('will-navigate', (event, url) => handleNavigation(event, url));
+      this.authWindow.webContents.on('will-redirect', (event, url) => handleNavigation(event, url));
+      // Fallback for navigations that bypass will-* events (e.g. server-side redirects already committed)
+      this.authWindow.webContents.on('did-navigate', (_event, url) => handleNavigation(null, url));
 
       this.authWindow.on('closed', () => {
         this.authWindow = null;
         if (!completed) {
-          // If closed without completing, resolve with existing status
+          completed = true;
+          // Closed without completing: resolve with existing status
           resolve(this.tokenManager.getSessionInfo());
         }
       });
 
-      this.authWindow.loadURL(authUrl);
+      this.authWindow.loadURL(authUrl, { userAgent: profile.loginUserAgent });
     });
   }
 }
 
 module.exports = OAuthWindow;
-

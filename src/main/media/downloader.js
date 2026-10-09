@@ -134,7 +134,7 @@ class Downloader {
         title: book.title
       });
 
-      const activationBytes = this.tokenManager.session?.activationBytes || '1a2b3c4d';
+      const activationBytes = this.tokenManager.session?.activationBytes || null;
 
       await Decryptor.decryptToM4b({
         inputPath: tempAudioPath,
