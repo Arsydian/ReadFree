@@ -5,7 +5,7 @@
  * and exposes secure IPC endpoints for the renderer.
  */
 
-const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, session } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
@@ -149,6 +149,12 @@ function registerIpcHandlers() {
   });
 
   ipcMain.handle('auth:logout', async () => {
+    try {
+      const authSession = session.fromPartition('persist:audible-auth');
+      await authSession.clearStorageData();
+    } catch (err) {
+      console.warn('[Main] Error clearing auth session partition on logout:', err);
+    }
     tokenManager.clear();
     return { success: true };
   });

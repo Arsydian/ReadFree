@@ -1,4 +1,4 @@
-﻿/**
+/**
  * ReadFree - Amazon / Audible OAuth Login Window
  * 
  * Manages an isolated Electron browser window for logging into Amazon/Audible.
@@ -32,8 +32,9 @@ class OAuthWindow {
     for (const [name, value] of Object.entries(cookies)) {
       try {
         await authSession.cookies.set({
-          url: `https://www.amazon.${domain}`,
+          url: `https://www.amazon.${domain}/`,
           domain: `.amazon.${domain}`,
+          path: '/',
           name,
           value,
           secure: true
@@ -50,6 +51,7 @@ class OAuthWindow {
    */
   async registerDevice({ authCode, codeVerifier, deviceSerial, marketplace }) {
     const market = DeviceProfile.getMarketplace(marketplace);
+    const profile = DeviceProfile.getProfile();
     const regPayload = DeviceProfile.buildRegistrationPayload({
       deviceSerial,
       codeVerifier,
@@ -64,7 +66,8 @@ class OAuthWindow {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Accept': 'application/json'
+        'Accept': 'application/json',
+        'User-Agent': profile.loginUserAgent
       },
       body: JSON.stringify(regPayload)
     });
@@ -103,7 +106,28 @@ class OAuthWindow {
 
     // Dedicated isolated session for the Amazon login flow
     const authSession = session.fromPartition('persist:audible-auth');
+
+    // Clean slate: clear prior session cookies/storage to prevent stale failed state from poisoning auth
+    await authSession.clearStorageData({
+      storages: ['cookies', 'localstorage', 'cache']
+    });
+
+    // Force consistent iOS User-Agent across ALL requests (initial GET, POSTs, OTP, redirects)
+    // to prevent Amazon bot-detection from flagging mismatched browser fingerprints
+    authSession.setUserAgent(profile.loginUserAgent);
     await this.seedInitCookies(authSession, market.domain);
+
+    // Strip Chromium/Desktop Client Hints (sec-ch-ua-*) that reveal Electron/Windows to Amazon anti-bot
+    authSession.webRequest.onBeforeSendHeaders((details, callback) => {
+      const requestHeaders = { ...details.requestHeaders };
+      for (const key of Object.keys(requestHeaders)) {
+        if (/^sec-ch-ua/i.test(key)) {
+          delete requestHeaders[key];
+        }
+      }
+      requestHeaders['User-Agent'] = profile.loginUserAgent;
+      callback({ requestHeaders });
+    });
 
     return new Promise((resolve, reject) => {
       this.authWindow = new BrowserWindow({
@@ -122,6 +146,8 @@ class OAuthWindow {
         }
       });
 
+      this.authWindow.webContents.setUserAgent(profile.loginUserAgent);
+
       // Security: Disallow child windows/popups from untrusted remote Amazon login flow
       this.authWindow.webContents.setWindowOpenHandler(() => {
         return { action: 'deny' };
@@ -130,6 +156,11 @@ class OAuthWindow {
       let completed = false;
 
       const finish = (err, result) => {
+        try {
+          authSession.webRequest.onBeforeRequest(null);
+          authSession.webRequest.onBeforeSendHeaders(null);
+        } catch (_) {}
+
         if (this.authWindow && !this.authWindow.isDestroyed()) {
           this.authWindow.close();
         }
@@ -190,6 +221,16 @@ class OAuthWindow {
         }
       };
 
+      // Network-level interception: guaranteed to catch the HTTP 302 redirect to maplanding
+      // before it reaches the network or displays a 404 error page to the user
+      authSession.webRequest.onBeforeRequest(
+        { urls: ['*://*/*/maplanding*'] },
+        (details, callback) => {
+          handleNavigation(null, details.url);
+          callback({ cancel: true });
+        }
+      );
+
       this.authWindow.webContents.on('will-navigate', (event, url) => handleNavigation(event, url));
       this.authWindow.webContents.on('will-redirect', (event, url) => handleNavigation(event, url));
       // Fallback for navigations that bypass will-* events (e.g. server-side redirects already committed)
@@ -199,6 +240,10 @@ class OAuthWindow {
         this.authWindow = null;
         if (!completed) {
           completed = true;
+          try {
+            authSession.webRequest.onBeforeRequest(null);
+            authSession.webRequest.onBeforeSendHeaders(null);
+          } catch (_) {}
           // Closed without completing: resolve with existing status
           resolve(this.tokenManager.getSessionInfo());
         }

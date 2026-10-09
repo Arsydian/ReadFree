@@ -30,11 +30,11 @@ const DEVICE_PROFILES = {
     bundleId: 'com.audible.iphone',
     appVersion: '3.56.2',
     softwareVersion: '35602678',
-    osVersion: '17.5.1',
+    osVersion: '15.0.0',
     deviceModel: 'iPhone',
     deviceName: '%FIRST_NAME%%FIRST_NAME_POSSESSIVE_STRING%%DUPE_STRATEGY_1ST%Audible for iPhone',
-    userAgent: 'Audible/3.56.2 (iPhone; iOS 17.5.1; Scale/3.00)',
-    loginUserAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148'
+    userAgent: 'Audible/3.56.2 (iPhone; iOS 15.0; Scale/3.00)',
+    loginUserAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148'
   }
 };
 
@@ -178,11 +178,17 @@ class DeviceProfile {
       return { state: 'pending' };
     }
 
-    if (!/(^|\.)amazon\./.test(urlObj.hostname) || urlObj.pathname !== '/ap/maplanding') {
+    // Only the real maplanding landing path completes the flow
+    const pathname = urlObj.pathname.replace(/\/+$/, '');
+    if (pathname !== '/ap/maplanding') {
       return { state: 'pending' };
     }
 
-    const code = urlObj.searchParams.get('openid.oa2.authorization_code');
+    if (!/(^|\.)(amazon|audible)\./i.test(urlObj.hostname)) {
+      return { state: 'pending' };
+    }
+
+    const code = urlObj.searchParams.get('openid.oa2.authorization_code') || urlObj.searchParams.get('authorization_code');
     if (code) {
       return { state: 'code', code };
     }
