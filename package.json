@@ -1,0 +1,26 @@
+{
+  "name": "readfree",
+  "version": "1.0.0",
+  "description": "Clean, modern, glassmorphic Audible library backup and ABS organizer",
+  "main": "src/main/index.js",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test tests/**/*.test.js",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder"
+  },
+  "keywords": [
+    "audible",
+    "audiobook",
+    "backup",
+    "drm-free",
+    "m4b",
+    "audiobookshelf",
+    "glassmorphism"
+  ],
+  "author": "ReadFree",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^33.2.1"
+  }
+}

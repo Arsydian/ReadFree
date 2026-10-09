@@ -1,0 +1,306 @@
+/**
+ * ReadFree - Glassmorphic Mini-Player & Chapter Inspector Styling
+ * 
+ * Provides styling for the docked bottom audio player:
+ * - Ultra-frosted glass dock with ambient top refraction border
+ * - Track metadata with thumbnail and current chapter label
+ * - Smooth seek bar with hover thumb and glow trail
+ * - Transport controls (Play/Pause, +/- 15s jump, speed multiplier)
+ * - Chapter inspector popover with list of chapter timestamps
+ */
+
+.mini-player-dock {
+  height: 84px;
+  background: rgba(10, 16, 28, 0.85);
+  border-top: 1px solid var(--glass-border-standard);
+  backdrop-filter: var(--blur-deep);
+  -webkit-backdrop-filter: var(--blur-deep);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 24px;
+  gap: 20px;
+  z-index: 100;
+  position: relative;
+  box-shadow: 0 -8px 32px rgba(0, 0, 0, 0.4);
+}
+
+/* Left: Now Playing Info */
+.player-track-info {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 280px;
+  min-width: 200px;
+}
+
+.player-thumb {
+  width: 52px;
+  height: 52px;
+  border-radius: var(--radius-sm);
+  object-fit: cover;
+  border: 1px solid var(--glass-border-standard);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  background: #000;
+  flex-shrink: 0;
+}
+
+.player-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow: hidden;
+}
+
+.player-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: #fff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.player-meta {
+  font-size: 11px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.player-current-chapter {
+  font-size: 11px;
+  color: var(--text-accent);
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Center: Transport Controls & Scrubber */
+.player-center-controls {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  max-width: 650px;
+}
+
+.transport-buttons {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.btn-transport {
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  padding: 6px;
+  transition: all var(--transition-fast);
+}
+
+.btn-transport:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.btn-transport svg {
+  width: 18px;
+  height: 18px;
+}
+
+.btn-play-master {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  background: var(--grad-accent);
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: var(--glow-cyan);
+  transition: all var(--transition-fast);
+}
+
+.btn-play-master:hover {
+  transform: scale(1.08);
+  filter: brightness(1.15);
+}
+
+.btn-play-master svg {
+  width: 18px;
+  height: 18px;
+  margin-left: 1px;
+}
+
+/* Scrubber / Seek Bar */
+.scrubber-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+}
+
+.time-stamp {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+  width: 44px;
+  text-align: center;
+}
+
+.seek-bar-container {
+  flex: 1;
+  height: 6px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: var(--radius-full);
+  position: relative;
+  cursor: pointer;
+  overflow: visible;
+}
+
+.seek-bar-fill {
+  height: 100%;
+  background: var(--grad-accent);
+  border-radius: var(--radius-full);
+  width: 0%;
+  position: relative;
+  box-shadow: var(--glow-cyan);
+}
+
+.seek-bar-thumb {
+  position: absolute;
+  right: -5px;
+  top: -3px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 0 8px rgba(6, 182, 212, 0.8);
+  opacity: 0;
+  transition: opacity var(--transition-fast);
+}
+
+.seek-bar-container:hover .seek-bar-thumb {
+  opacity: 1;
+}
+
+/* Right: Utilities & Chapter Popover Button */
+.player-right-controls {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 280px;
+  justify-content: flex-end;
+}
+
+.volume-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 120px;
+}
+
+.volume-control svg {
+  width: 16px;
+  height: 16px;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.volume-slider {
+  flex: 1;
+  accent-color: var(--accent-primary);
+  height: 4px;
+  cursor: pointer;
+}
+
+/* Chapter Inspector Popover Drawer */
+.chapter-inspector-popover {
+  position: absolute;
+  bottom: 94px;
+  right: 24px;
+  width: 340px;
+  max-height: 420px;
+  background: var(--glass-bg-modal);
+  border: 1px solid var(--glass-border-highlight);
+  border-radius: var(--radius-lg);
+  backdrop-filter: var(--blur-deep);
+  box-shadow: var(--shadow-floating);
+  display: flex;
+  flex-direction: column;
+  z-index: 200;
+  overflow: hidden;
+  animation: slideUpFade var(--transition-normal);
+}
+
+.chapter-inspector-popover.hidden {
+  display: none;
+}
+
+@keyframes slideUpFade {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.chapter-popover-header {
+  padding: 14px 16px;
+  background: var(--glass-bg-subtle);
+  border-bottom: 1px solid var(--glass-border-faint);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.chapter-popover-header h4 {
+  font-size: 13px;
+  font-weight: 700;
+  color: #fff;
+}
+
+.chapter-list {
+  overflow-y: auto;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.chapter-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.chapter-item:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+}
+
+.chapter-item.active {
+  background: rgba(59, 130, 246, 0.2);
+  color: var(--text-accent);
+  font-weight: 600;
+}
+
+.chapter-item-time {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-muted);
+}

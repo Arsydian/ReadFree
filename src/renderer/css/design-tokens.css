@@ -1,0 +1,79 @@
+/**
+ * ReadFree - Glassmorphic Design System Tokens
+ * 
+ * Defines core variables for dark frosted glassmorphism, luminous borders,
+ * depth layering, vibrant gradient accents, and typography.
+ */
+
+:root {
+  /* Color Palette - Deep Obsidian Dark Canvas */
+  --bg-deep: #070a10;
+  --bg-surface: #0c111c;
+  --bg-elevated: #111827;
+  
+  /* Glass Surfaces (Translucent with light refraction) */
+  --glass-bg-subtle: rgba(18, 26, 43, 0.45);
+  --glass-bg-panel: rgba(15, 23, 42, 0.65);
+  --glass-bg-card: rgba(22, 33, 56, 0.55);
+  --glass-bg-card-hover: rgba(30, 45, 77, 0.75);
+  --glass-bg-modal: rgba(13, 20, 36, 0.85);
+  --glass-bg-input: rgba(10, 16, 28, 0.6);
+  
+  /* Glass Borders */
+  --glass-border-faint: rgba(255, 255, 255, 0.05);
+  --glass-border-standard: rgba(255, 255, 255, 0.10);
+  --glass-border-highlight: rgba(255, 255, 255, 0.22);
+  --glass-border-active: rgba(99, 102, 241, 0.45);
+
+  /* Luminous Accents & Gradients */
+  --accent-primary: #3b82f6;
+  --accent-primary-hover: #60a5fa;
+  --accent-cyan: #06b6d4;
+  --accent-indigo: #6366f1;
+  --accent-purple: #a855f7;
+  --accent-emerald: #10b981;
+  --accent-amber: #f59e0b;
+  --accent-rose: #f43f5e;
+  
+  /* Gradients */
+  --grad-hero: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 50%, #ec4899 100%);
+  --grad-accent: linear-gradient(135deg, #06b6d4 0%, #3b82f6 100%);
+  --grad-glow: radial-gradient(circle at 50% 0%, rgba(59, 130, 246, 0.18) 0%, transparent 70%);
+  --grad-glass: linear-gradient(135deg, rgba(255, 255, 255, 0.08) 0%, rgba(255, 255, 255, 0.01) 100%);
+  
+  /* Text Colors */
+  --text-primary: #f8fafc;
+  --text-secondary: #94a3b8;
+  --text-muted: #64748b;
+  --text-faint: #475569;
+  --text-accent: #38bdf8;
+
+  /* Typography */
+  --font-family: 'Segoe UI', system-ui, -apple-system, BlinkMacSystemFont, Roboto, sans-serif;
+  --font-mono: 'Cascadia Code', Consolas, 'Courier New', monospace;
+  
+  /* Blur Filter Strengths */
+  --blur-subtle: blur(10px);
+  --blur-standard: blur(20px);
+  --blur-deep: blur(32px);
+
+  /* Elevation Shadows & Luminous Glows */
+  --shadow-subtle: 0 4px 16px rgba(0, 0, 0, 0.25);
+  --shadow-card: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+  --shadow-floating: 0 16px 48px rgba(0, 0, 0, 0.55);
+  --glow-accent: 0 0 24px rgba(59, 130, 246, 0.35);
+  --glow-cyan: 0 0 20px rgba(6, 182, 212, 0.3);
+  --glow-emerald: 0 0 20px rgba(16, 185, 129, 0.3);
+
+  /* Spacing */
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 18px;
+  --radius-xl: 24px;
+  --radius-full: 9999px;
+
+  /* Transitions */
+  --transition-fast: 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-normal: 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-smooth: 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+}
