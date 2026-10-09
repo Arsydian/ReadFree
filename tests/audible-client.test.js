@@ -79,3 +79,39 @@ test('AudibleClient buildRequestHeaders attaches valid ADP headers and modern Us
   assert.match(headers['User-Agent'], /Audible\/3\.56\.2/);
 });
 
+test('AudibleClient decryptVoucher decrypts AES-128-CBC license vouchers accurately', () => {
+  const crypto = require('crypto');
+  const mockTokenManager = {
+    session: {
+      marketplace: 'us',
+      deviceType: 'A2CZJZGLK2JJVM',
+      deviceSerial: 'TEST_SERIAL_1234',
+      userId: 'test_cust_id'
+    },
+    getDeviceSerial: () => 'TEST_SERIAL_1234'
+  };
+
+  const client = new AudibleClient(mockTokenManager);
+  const asin = 'B0TESTASIN1';
+
+  // Construct test fixture matching the reference algorithm
+  const bufStr = 'A2CZJZGLK2JJVMTEST_SERIAL_1234test_cust_idB0TESTASIN1';
+  const digest = crypto.createHash('sha256').update(bufStr, 'ascii').digest();
+  const k = digest.subarray(0, 16);
+  const v = digest.subarray(16, 32);
+
+  const rawJson = JSON.stringify({ key: '0123456789abcdef0123456789abcdef', iv: 'fedcba9876543210fedcba9876543210' });
+  const padLen = 16 - (rawJson.length % 16);
+  const paddedBuf = Buffer.concat([Buffer.from(rawJson, 'utf8'), Buffer.alloc(padLen === 16 ? 0 : padLen, 0)]);
+
+  const cipher = crypto.createCipheriv('aes-128-cbc', k, v);
+  cipher.setAutoPadding(false);
+  const encrypted = Buffer.concat([cipher.update(paddedBuf), cipher.final()]);
+  const b64 = encrypted.toString('base64');
+
+  const result = client.decryptVoucher(b64, asin);
+  assert.ok(result);
+  assert.strictEqual(result.key, '0123456789abcdef0123456789abcdef');
+  assert.strictEqual(result.iv, 'fedcba9876543210fedcba9876543210');
+});
+

@@ -211,7 +211,9 @@ class OAuthWindow {
             refreshToken: bearer?.refresh_token || null,
             expiresAt: Date.now() + ((parseInt(bearer?.expires_in, 10) || 3600) * 1000),
             marketplace,
-            userName: custInfo?.name || 'Audible Member'
+            userId: custInfo?.user_id || null,
+            userName: custInfo?.name || 'Audible Member',
+            userEmail: custInfo?.email || null
           });
 
           // Automatically fetch user activation bytes for DRM-free M4B conversion

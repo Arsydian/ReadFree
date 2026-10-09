@@ -17,15 +17,30 @@ const path = require('path');
 
 class Decryptor {
   /**
+   * Escapes special characters for FFMETADATA1 format (=, ;, #, \, newline).
+   * @param {string} str
+   * @returns {string}
+   */
+  static escapeFfmetadata(str) {
+    if (!str) return '';
+    return str.toString()
+      .replace(/\\/g, '\\\\')
+      .replace(/=/g, '\\=')
+      .replace(/;/g, '\\;')
+      .replace(/#/g, '\\#')
+      .replace(/\n/g, '\\\n');
+  }
+
+  /**
    * Generates FFmetadata formatted string from chapters array.
    * @param {Array<Object>} chapters Array of { title, startTime, duration }
    * @returns {string} FFmetadata contents
    */
   static generateFfmetadata(chapters, book) {
     let content = ';FFMETADATA1\n';
-    content += `title=${book.title || ''}\n`;
-    content += `artist=${book.authors || ''}\n`;
-    content += `album=${book.series || book.title || ''}\n`;
+    content += `title=${this.escapeFfmetadata(book.title)}\n`;
+    content += `artist=${this.escapeFfmetadata(book.authors)}\n`;
+    content += `album=${this.escapeFfmetadata(book.series || book.title)}\n`;
     content += `genre=Audiobook\n\n`;
 
     if (Array.isArray(chapters) && chapters.length > 0) {
@@ -37,7 +52,7 @@ class Decryptor {
         content += 'TIMEBASE=1/1000\n';
         content += `START=${startMs}\n`;
         content += `END=${endMs}\n`;
-        content += `title=${ch.title || 'Chapter'}\n\n`;
+        content += `title=${this.escapeFfmetadata(ch.title || 'Chapter')}\n\n`;
       }
     }
 
@@ -72,7 +87,8 @@ class Decryptor {
 
     // Write temp FFmetadata file
     const metaFile = path.join(outDir, `_ffmeta_${book.asin}.txt`);
-    const metaContent = this.generateFfmetadata(chapters || book.chapters || [], book);
+    const chapterList = chapters || book.chapters || [];
+    const metaContent = this.generateFfmetadata(chapterList, book);
     fs.writeFileSync(metaFile, metaContent, 'utf8');
 
     return new Promise((resolve, reject) => {
@@ -104,9 +120,14 @@ class Decryptor {
       args.push('-map', '0:a');
       args.push('-map_metadata', '1');
 
+      if (Array.isArray(chapterList) && chapterList.length > 0) {
+        args.push('-map_chapters', '1');
+      }
+
       if (hasCover) {
         args.push('-map', '2:v');
         args.push('-disposition:v:0', 'attached_pic');
+        args.push('-c:v', 'copy');
       }
 
       // Stream copy audio (-c:a copy gives lossless speed with no re-encoding)

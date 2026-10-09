@@ -82,12 +82,20 @@ class AbsOrganizer {
       asin: book.asin,
       language: 'English',
       explicit: false,
-      chapters: Array.isArray(book.chapters) ? book.chapters.map((ch, idx) => ({
-        id: idx + 1,
-        start: ch.startTime || 0,
-        end: (ch.startTime || 0) + (ch.duration || 0),
-        title: ch.title || `Chapter ${idx + 1}`
-      })) : []
+      chapters: Array.isArray(book.chapters) ? book.chapters.map((ch, idx) => {
+        const startSec = ch.startTime !== undefined 
+          ? ch.startTime 
+          : ((ch.start_offset_ms || 0) / 1000);
+        const durationSec = ch.duration !== undefined 
+          ? ch.duration 
+          : ((ch.length_ms || 0) / 1000);
+        return {
+          id: idx + 1,
+          start: startSec,
+          end: startSec + durationSec,
+          title: ch.title || `Chapter ${idx + 1}`
+        };
+      }) : []
     };
 
     const targetPath = path.join(bookDir, 'metadata.json');

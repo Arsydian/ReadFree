@@ -241,6 +241,7 @@ class TokenManager {
       expiresAt: sessionData.expiresAt || (Date.now() + 3600000 * 24 * 30),
       activationBytes: sessionData.activationBytes || this.session?.activationBytes || '00000000',
       marketplace: sessionData.marketplace || this.session?.marketplace || 'us',
+      userId: sessionData.userId || this.session?.userId || null,
       userName: sessionData.userName || this.session?.userName || 'Audible Listener',
       userEmail: sessionData.userEmail || this.session?.userEmail || ''
     };
@@ -276,7 +277,9 @@ class TokenManager {
     const deviceSerial = data.device_serial || data.DeviceSerial || data.registration_data?.device_serial || this.getDeviceSerial();
     const marketplace = (data.locale_code || data.locale || data.marketplace || data.Marketplace || 'us').toLowerCase();
     const activationBytes = data.activation_bytes || data.ActivationBytes || data.activationBytes || '00000000';
+    const userId = data.customer_info?.user_id || data.user_id || data.customerId || data.CustomerId || data.amazonAccountId || data.AmazonAccountId || null;
     const userName = data.customer_info?.name || data.name || data.userName || data.UserName || 'Audible Listener';
+    const userEmail = data.customer_info?.email || data.email || data.userEmail || '';
 
     if (!adpToken && !accessToken) {
       throw new Error('Import failed: File contains neither adp_token nor access_token credentials.');
@@ -290,7 +293,9 @@ class TokenManager {
       deviceSerial,
       marketplace,
       activationBytes,
-      userName
+      userId,
+      userName,
+      userEmail
     });
 
     console.log('[TokenManager] Successfully imported external credentials for marketplace:', marketplace);
@@ -316,7 +321,8 @@ class TokenManager {
       marketplace: this.session.marketplace || 'us',
       activationBytes: this.session.activationBytes || '00000000',
       hasAdpCredentials: this.hasAdpCredentials(),
-      deviceSerial: this.session.deviceSerial
+      deviceSerial: this.session.deviceSerial,
+      userId: this.session.userId || null
     };
   }
 

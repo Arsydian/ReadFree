@@ -89,14 +89,7 @@ class Downloader {
         coverPath = await AbsOrganizer.saveCoverImage(targetDir, book.coverUrl, userAgent);
       }
 
-      // Step 2: Download Companion PDF if enabled
-      let pdfPath = null;
-      if (settings.downloadPdfs && book.pdfUrl) {
-        this.emitProgress(asin, { status: 'downloading', speedText: 'Downloading companion PDF...', percentage: 15 });
-        pdfPath = await AbsOrganizer.saveCompanionPdf(targetDir, book.pdfUrl, book.title, userAgent);
-      }
-
-      // Step 3: Ensure Activation Bytes exist (if not already retrieved)
+      // Step 2: Ensure Activation Bytes exist (if not already retrieved)
       let activationBytes = this.tokenManager.session?.activationBytes;
       if (!activationBytes || activationBytes === '00000000') {
         this.emitProgress(asin, {
@@ -112,7 +105,7 @@ class Downloader {
         }
       }
 
-      // Step 4: Request Official Content License & Download URL
+      // Step 3: Request Official Content License & Download URL
       this.emitProgress(asin, {
         status: 'downloading',
         percentage: 12,
@@ -126,6 +119,14 @@ class Downloader {
       const safeTitle = AbsOrganizer.sanitize(book.title);
       tempAudioPath = path.join(targetDir, `${safeTitle}${ext}`);
       const finalM4bPath = path.join(targetDir, `${safeTitle}.m4b`);
+
+      // Step 4: Download Companion PDF if enabled (from library metadata or license)
+      let pdfPath = null;
+      const pdfTargetUrl = book.pdfUrl || license.pdfUrl;
+      if (settings.downloadPdfs && pdfTargetUrl) {
+        this.emitProgress(asin, { status: 'downloading', speedText: 'Downloading companion PDF...', percentage: 14 });
+        pdfPath = await AbsOrganizer.saveCompanionPdf(targetDir, pdfTargetUrl, book.title, userAgent);
+      }
 
       // Step 5: Real Audio Stream Download with live byte/speed tracking
       const audioResponse = await fetch(license.offlineUrl, {
@@ -198,7 +199,16 @@ class Downloader {
         title: book.title
       });
 
-      const chapters = license.chapterInfo?.chapters || book.chapters || [];
+      const rawChapters = license.chapterInfo?.chapters || book.chapters || [];
+      const normalizedChapters = Array.isArray(rawChapters) ? rawChapters.map(ch => ({
+        title: ch.title || 'Chapter',
+        startTime: ch.start_offset_ms !== undefined ? (ch.start_offset_ms / 1000) : (ch.startTime || 0),
+        duration: ch.length_ms !== undefined ? (ch.length_ms / 1000) : (ch.duration || 0),
+        start_offset_ms: ch.start_offset_ms !== undefined ? ch.start_offset_ms : Math.round((ch.startTime || 0) * 1000),
+        length_ms: ch.length_ms !== undefined ? ch.length_ms : Math.round((ch.duration || 0) * 1000)
+      })) : [];
+
+      book.chapters = normalizedChapters;
 
       await Decryptor.decryptToM4b({
         inputPath: tempAudioPath,
@@ -206,7 +216,7 @@ class Downloader {
         activationBytes,
         voucher: license.voucher,
         book,
-        chapters,
+        chapters: normalizedChapters,
         coverPath,
         onProgress: (p) => {
           this.emitProgress(asin, {
@@ -228,10 +238,11 @@ class Downloader {
         AbsOrganizer.writeAbsMetadata(targetDir, book);
       }
 
-      // Step 6: Finalize Database State
+      // Step 8: Finalize Database State
       this.libraryDB.updateBookStatus(asin, 'downloaded', {
         m4bPath: finalM4bPath,
         pdfPath: pdfPath || book.pdfPath || null,
+        chapters: normalizedChapters,
         downloadedAt: new Date().toISOString()
       });
 

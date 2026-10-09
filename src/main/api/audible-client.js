@@ -7,6 +7,7 @@
  * - Request content licensing, DRM vouchers, and direct download links
  */
 
+const crypto = require('crypto');
 const { DeviceProfile } = require('../auth/device-profile');
 
 const MARKETPLACE_API_HOSTS = {
@@ -240,6 +241,48 @@ class AudibleClient {
   }
 
   /**
+   * Decrypts the AES-128-CBC voucher returned in an AAXC license response.
+   * Matches the cryptographic algorithm from mkb79/audible and Libation:
+   * SHA256(deviceType + deviceSerial + customerId + asin) -> key (first 16B), iv (last 16B).
+   * 
+   * @param {string} licenseResponse Base64 encoded encrypted voucher
+   * @param {string} asin Audiobook ASIN
+   * @returns {{ key: string, iv: string } | null}
+   */
+  decryptVoucher(licenseResponse, asin) {
+    if (!licenseResponse) return null;
+    try {
+      const session = this.tokenManager.session || {};
+      const deviceType = session.deviceType || DeviceProfile.getProfile().deviceType;
+      const deviceSerial = session.deviceSerial || this.tokenManager.getDeviceSerial();
+      const customerId = session.userId || session.customerId || '';
+
+      const bufStr = `${deviceType}${deviceSerial}${customerId}${asin}`;
+      const digest = crypto.createHash('sha256').update(bufStr, 'ascii').digest();
+      const key = digest.subarray(0, 16);
+      const iv = digest.subarray(16, 32);
+
+      const decipher = crypto.createDecipheriv('aes-128-cbc', key, iv);
+      decipher.setAutoPadding(false);
+      const b64Voucher = Buffer.from(licenseResponse, 'base64');
+      const decrypted = Buffer.concat([decipher.update(b64Voucher), decipher.final()]);
+
+      let end = decrypted.length;
+      while (end > 0 && decrypted[end - 1] === 0) end--;
+      const plaintext = decrypted.subarray(0, end).toString('utf8');
+
+      const parsed = JSON.parse(plaintext);
+      return {
+        key: parsed.key,
+        iv: parsed.iv
+      };
+    } catch (err) {
+      console.warn('[AudibleClient] Failed to decrypt AAXC voucher:', err.message);
+      return null;
+    }
+  }
+
+  /**
    * Requests an official content download license and decryption metadata for an audiobook.
    * Calls Audible's /1.0/content/{asin}/licenserequest with ADP signature.
    * 
@@ -260,7 +303,10 @@ class AudibleClient {
     const payload = {
       supported_media_features: {
         drm_types: ['Adrm', 'Mpeg'],
-        codecs: ['mp4a.40.2']
+        codecs: ['mp4a.40.2'],
+        chapter_titles_type: 'Tree',
+        previews: false,
+        catalog_samples: false
       },
       consumption_type: 'Download',
       quality: 'High',
@@ -298,14 +344,19 @@ class AudibleClient {
       throw new Error(`No offline download URL returned in Audible content license for ASIN ${asin}`);
     }
 
+    let voucher = license.voucher || null;
+    if (!voucher && license.license_response) {
+      voucher = this.decryptVoucher(license.license_response, asin);
+    }
+
     return {
       offlineUrl,
       format: ref.content_format || 'AAX',
       codec: ref.codec || 'mp4a.40.2',
       sizeBytes: ref.content_size_in_bytes || 0,
-      voucher: license.voucher || null,
+      voucher,
       chapterInfo: metadata.chapter_info || null,
-      pdfUrl: license.pdf_url || null
+      pdfUrl: license.pdf_url || metadata.content_reference?.pdf_url || null
     };
   }
 

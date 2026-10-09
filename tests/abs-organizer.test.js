@@ -72,3 +72,28 @@ test('AbsOrganizer.writeAbsMetadata generates valid Audiobookshelf JSON schema',
   // Cleanup
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
+
+test('AbsOrganizer.writeAbsMetadata normalizes Audible millisecond chapters to seconds', () => {
+  const tmpDir = path.join(os.tmpdir(), `readfree_ms_test_${Date.now()}`);
+  fs.mkdirSync(tmpDir, { recursive: true });
+
+  const book = {
+    asin: 'B0GGNKSBRQ',
+    title: 'Redwood',
+    authors: 'Test Author',
+    chapters: [
+      { title: 'Intro', start_offset_ms: 0, length_ms: 15400 },
+      { title: 'Chapter 1', start_offset_ms: 15400, length_ms: 1200500 }
+    ]
+  };
+
+  const metaPath = AbsOrganizer.writeAbsMetadata(tmpDir, book);
+  const content = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+  assert.strictEqual(content.chapters.length, 2);
+  assert.strictEqual(content.chapters[0].start, 0);
+  assert.strictEqual(content.chapters[0].end, 15.4);
+  assert.strictEqual(content.chapters[1].start, 15.4);
+  assert.strictEqual(content.chapters[1].end, 1215.9);
+
+  fs.rmSync(tmpDir, { recursive: true, force: true });
+});
