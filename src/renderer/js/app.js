@@ -35,11 +35,16 @@ class App {
   }
 
   async init() {
-    if (window.api?.appVersion) {
-      const versionBadge = document.querySelector('.titlebar-badge');
-      if (versionBadge) {
-        versionBadge.textContent = `v${window.api.appVersion}`;
+    try {
+      if (window.api?.app?.getVersion) {
+        const version = await window.api.app.getVersion();
+        const versionBadge = document.querySelector('.titlebar-badge');
+        if (versionBadge && version) {
+          versionBadge.textContent = `v${version}`;
+        }
       }
+    } catch (e) {
+      console.warn('Could not retrieve app version:', e);
     }
     await this.updateAuthStatus();
     await this.settingsView.loadSettings();
@@ -165,8 +170,16 @@ class App {
   }
 }
 
-// Instantiate application on DOM ready
-window.addEventListener('DOMContentLoaded', () => {
-  window.app = new App();
-  window.app.init();
-});
+// Instantiate application safely regardless of document ready state
+function startApp() {
+  if (!window.app) {
+    window.app = new App();
+    window.app.init().catch(err => console.error('[App] Init error:', err));
+  }
+}
+
+if (document.readyState === 'loading') {
+  window.addEventListener('DOMContentLoaded', startApp);
+} else {
+  startApp();
+}

@@ -133,6 +133,9 @@ app.on('window-all-closed', () => {
  * Registers all IPC communication bridges.
  */
 function registerIpcHandlers() {
+  // --- App Info Handlers ---
+  ipcMain.handle('app:get-version', () => app.getVersion());
+
   // --- Auth Handlers ---
   ipcMain.handle('auth:login', async () => {
     try {
