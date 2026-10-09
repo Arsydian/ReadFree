@@ -1,6 +1,6 @@
 {
   "name": "readfree",
-  "version": "1.1.5",
+  "version": "1.1.6",
   "description": "Clean, modern, glassmorphic Audible library backup and ABS organizer",
   "main": "src/main/index.js",
   "scripts": {

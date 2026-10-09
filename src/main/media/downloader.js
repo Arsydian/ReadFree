@@ -16,6 +16,7 @@ const fs = require('fs');
 const path = require('path');
 const AbsOrganizer = require('../organizer/abs-organizer');
 const Decryptor = require('./decryptor');
+const { DeviceProfile } = require('../auth/device-profile');
 
 class Downloader {
   /**
@@ -70,6 +71,10 @@ class Downloader {
       coverUrl: book.coverUrl
     });
 
+    let tempAudioPath = null;
+    const profile = DeviceProfile.getProfile();
+    const userAgent = profile?.userAgent || 'Audible/3.56.2 (iPhone; iOS 15.0; Scale/3.00)';
+
     try {
       const settings = this.libraryDB.getSettings();
       const targetDir = AbsOrganizer.getBookDirectory(settings.outputDir, book);
@@ -81,14 +86,14 @@ class Downloader {
       let coverPath = null;
       if (book.coverUrl) {
         this.emitProgress(asin, { status: 'downloading', speedText: 'Saving cover art...', percentage: 5 });
-        coverPath = await AbsOrganizer.saveCoverImage(targetDir, book.coverUrl);
+        coverPath = await AbsOrganizer.saveCoverImage(targetDir, book.coverUrl, userAgent);
       }
 
       // Step 2: Download Companion PDF if enabled
       let pdfPath = null;
       if (settings.downloadPdfs && book.pdfUrl) {
         this.emitProgress(asin, { status: 'downloading', speedText: 'Downloading companion PDF...', percentage: 15 });
-        pdfPath = await AbsOrganizer.saveCompanionPdf(targetDir, book.pdfUrl, book.title);
+        pdfPath = await AbsOrganizer.saveCompanionPdf(targetDir, book.pdfUrl, book.title, userAgent);
       }
 
       // Step 3: Ensure Activation Bytes exist (if not already retrieved)
@@ -119,11 +124,14 @@ class Downloader {
       const isAaxc = !!(license.voucher && license.voucher.key && license.voucher.iv);
       const ext = isAaxc ? '.temp.aaxc' : '.temp.aax';
       const safeTitle = AbsOrganizer.sanitize(book.title);
-      const tempAudioPath = path.join(targetDir, `${safeTitle}${ext}`);
+      tempAudioPath = path.join(targetDir, `${safeTitle}${ext}`);
       const finalM4bPath = path.join(targetDir, `${safeTitle}.m4b`);
 
       // Step 5: Real Audio Stream Download with live byte/speed tracking
       const audioResponse = await fetch(license.offlineUrl, {
+        headers: {
+          'User-Agent': userAgent
+        },
         signal: abortController.signal
       });
 
@@ -148,7 +156,9 @@ class Downloader {
           const { done, value } = await reader.read();
           if (done) break;
 
-          fileStream.write(Buffer.from(value));
+          if (!fileStream.write(Buffer.from(value))) {
+            await new Promise((resolve) => fileStream.once('drain', resolve));
+          }
           downloadedBytes += value.length;
 
           const now = Date.now();
@@ -238,6 +248,9 @@ class Downloader {
       console.log(`[Downloader] Completed liberation for ${book.title}`);
     } catch (err) {
       this.activeTasks.delete(asin);
+      if (tempAudioPath && fs.existsSync(tempAudioPath)) {
+        try { fs.unlinkSync(tempAudioPath); } catch (_) {}
+      }
       const isCancelled = err.message.includes('cancelled');
       const finalStatus = isCancelled ? 'ready' : 'failed';
       

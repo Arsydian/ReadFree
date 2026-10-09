@@ -99,9 +99,10 @@ class AbsOrganizer {
    * Downloads high-resolution cover artwork and saves as cover.jpg in the book folder.
    * @param {string} bookDir Target folder
    * @param {string} coverUrl Image URL
+   * @param {string} [userAgent] Optional User-Agent header
    * @returns {Promise<string|null>} Path to saved cover.jpg
    */
-  static async saveCoverImage(bookDir, coverUrl) {
+  static async saveCoverImage(bookDir, coverUrl, userAgent = null) {
     if (!coverUrl) return null;
     if (!fs.existsSync(bookDir)) {
       fs.mkdirSync(bookDir, { recursive: true });
@@ -109,7 +110,8 @@ class AbsOrganizer {
 
     const coverPath = path.join(bookDir, 'cover.jpg');
     try {
-      const response = await fetch(coverUrl);
+      const headers = userAgent ? { 'User-Agent': userAgent } : {};
+      const response = await fetch(coverUrl, { headers });
       if (!response.ok) return null;
       const buffer = await response.arrayBuffer();
       fs.writeFileSync(coverPath, Buffer.from(buffer));
@@ -125,9 +127,10 @@ class AbsOrganizer {
    * @param {string} bookDir Target folder
    * @param {string} pdfUrl PDF URL
    * @param {string} title Safe title for filename
+   * @param {string} [userAgent] Optional User-Agent header
    * @returns {Promise<string|null>} Path to saved PDF
    */
-  static async saveCompanionPdf(bookDir, pdfUrl, title) {
+  static async saveCompanionPdf(bookDir, pdfUrl, title, userAgent = null) {
     if (!pdfUrl) return null;
     if (!fs.existsSync(bookDir)) {
       fs.mkdirSync(bookDir, { recursive: true });
@@ -137,7 +140,8 @@ class AbsOrganizer {
     const pdfPath = path.join(bookDir, safeFilename);
 
     try {
-      const response = await fetch(pdfUrl);
+      const headers = userAgent ? { 'User-Agent': userAgent } : {};
+      const response = await fetch(pdfUrl, { headers });
       if (!response.ok) return null;
       const buffer = await response.arrayBuffer();
       fs.writeFileSync(pdfPath, Buffer.from(buffer));
