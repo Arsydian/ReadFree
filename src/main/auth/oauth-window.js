@@ -214,6 +214,11 @@ class OAuthWindow {
             userName: custInfo?.name || 'Audible Member'
           });
 
+          // Automatically fetch user activation bytes for DRM-free M4B conversion
+          await this.tokenManager.fetchActivationBytes().catch((e) => {
+            console.warn('[OAuthWindow] Activation bytes retrieval deferred:', e.message);
+          });
+
           finish(null, this.tokenManager.getSessionInfo());
         } catch (err) {
           console.error('[OAuthWindow] Authentication error:', err);

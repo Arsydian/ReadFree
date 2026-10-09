@@ -30,8 +30,9 @@ class Decryptor {
 
     if (Array.isArray(chapters) && chapters.length > 0) {
       for (const ch of chapters) {
-        const startMs = Math.round((ch.startTime || 0) * 1000);
-        const endMs = Math.round(((ch.startTime || 0) + (ch.duration || 0)) * 1000);
+        const startMs = ch.start_offset_ms !== undefined ? ch.start_offset_ms : Math.round((ch.startTime || 0) * 1000);
+        const lengthMs = ch.length_ms !== undefined ? ch.length_ms : Math.round((ch.duration || 0) * 1000);
+        const endMs = startMs + lengthMs;
         content += '[CHAPTER]\n';
         content += 'TIMEBASE=1/1000\n';
         content += `START=${startMs}\n`;
@@ -44,18 +45,20 @@ class Decryptor {
   }
 
   /**
-   * Decrypts input AAX file to lossless M4B with embedded tags and cover.
+   * Decrypts input AAX/AAXC file to lossless M4B with embedded tags and cover.
    * @param {Object} options
-   * @param {string} options.inputPath Path to input encrypted AAX or audio stream
+   * @param {string} options.inputPath Path to input encrypted AAX or AAXC stream
    * @param {string} options.outputPath Target .m4b path
-   * @param {string} options.activationBytes 4-byte hex string (e.g. "1a2b3c4d")
+   * @param {string} [options.activationBytes] 4-byte hex string (e.g. "0445f805")
+   * @param {Object} [options.voucher] AAXC voucher with { key, iv }
    * @param {Object} options.book Metadata record
+   * @param {Array<Object>} [options.chapters] Chapter list
    * @param {string} [options.coverPath] Path to cover.jpg
    * @param {Function} [options.onProgress] Progress callback
    * @returns {Promise<string>} Output .m4b path upon success
    */
   static async decryptToM4b(options) {
-    const { inputPath, outputPath, activationBytes, book, coverPath, onProgress } = options;
+    const { inputPath, outputPath, activationBytes, voucher, book, chapters, coverPath, onProgress } = options;
 
     if (!fs.existsSync(inputPath)) {
       throw new Error(`Source audio file not found: ${inputPath}`);
@@ -69,15 +72,18 @@ class Decryptor {
 
     // Write temp FFmetadata file
     const metaFile = path.join(outDir, `_ffmeta_${book.asin}.txt`);
-    const metaContent = this.generateFfmetadata(book.chapters || [], book);
+    const metaContent = this.generateFfmetadata(chapters || book.chapters || [], book);
     fs.writeFileSync(metaFile, metaContent, 'utf8');
 
     return new Promise((resolve, reject) => {
       // Build FFmpeg command arguments
       const args = ['-y'];
 
-      // Decrypt activation bytes if provided
-      if (activationBytes && activationBytes !== '00000000') {
+      // Decrypt using either AAXC voucher keys or AAX activation bytes
+      if (voucher && voucher.key && voucher.iv) {
+        args.push('-audible_key', voucher.key);
+        args.push('-audible_iv', voucher.iv);
+      } else if (activationBytes && activationBytes !== '00000000') {
         args.push('-activation_bytes', activationBytes);
       }
 
@@ -145,17 +151,7 @@ class Decryptor {
           console.log(`[Decryptor] Successfully created DRM-free M4B: ${outputPath}`);
           resolve(outputPath);
         } else {
-          // If ffmpeg failed due to input type or mock file during demo testing, create playable test audio
-          if (!fs.existsSync(outputPath)) {
-            console.warn(`[Decryptor] FFmpeg exited with code ${code}. Creating container for testing.`);
-            // Fallback generation for mock test files
-            try {
-              fs.writeFileSync(outputPath, Buffer.from('READFREE_M4B_MOCK_CONTAINER'));
-              resolve(outputPath);
-              return;
-            } catch (_) {}
-          }
-          reject(new Error(`FFmpeg conversion failed (code ${code}): ${stderrLog.slice(-400)}`));
+          reject(new Error(`FFmpeg decryption/conversion failed (code ${code}): ${stderrLog.slice(-500)}`));
         }
       });
 

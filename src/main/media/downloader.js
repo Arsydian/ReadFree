@@ -91,62 +91,118 @@ class Downloader {
         pdfPath = await AbsOrganizer.saveCompanionPdf(targetDir, book.pdfUrl, book.title);
       }
 
-      // Step 3: Audio Stream Download & Simulation
-      const safeTitle = AbsOrganizer.sanitize(book.title);
-      const tempAudioPath = path.join(targetDir, `${safeTitle}.temp.aax`);
-      const finalM4bPath = path.join(targetDir, `${safeTitle}.m4b`);
-
-      // Simulated or Real Streaming Progress
-      const totalSimBytes = (book.runtimeSeconds || 36000) * 16000; // ~128kbps estimate
-      let downloaded = 0;
-      const chunkSize = totalSimBytes / 20;
-
-      for (let i = 1; i <= 20; i++) {
-        if (abortController.signal.aborted) {
-          throw new Error('Download cancelled by user.');
-        }
-
-        await new Promise(r => setTimeout(r, 120));
-        downloaded += chunkSize;
-        const pct = Math.min(85, Math.round((downloaded / totalSimBytes) * 75) + 10);
-        
+      // Step 3: Ensure Activation Bytes exist (if not already retrieved)
+      let activationBytes = this.tokenManager.session?.activationBytes;
+      if (!activationBytes || activationBytes === '00000000') {
         this.emitProgress(asin, {
           status: 'downloading',
-          percentage: pct,
-          bytesDownloaded: downloaded,
-          totalBytes: totalSimBytes,
-          speedText: '14.2 MB/s',
-          title: book.title,
-          coverUrl: book.coverUrl
+          percentage: 8,
+          speedText: 'Retrieving activation credentials...',
+          title: book.title
         });
+        try {
+          activationBytes = await this.tokenManager.fetchActivationBytes();
+        } catch (actErr) {
+          console.warn('[Downloader] Activation bytes fetch error, continuing to license request:', actErr.message);
+        }
       }
 
-      // Create local source file for decryption remuxing
-      if (!fs.existsSync(tempAudioPath)) {
-        fs.writeFileSync(tempAudioPath, Buffer.from('RIFF_AUDIBLE_CONTAINER'));
-      }
-
-      // Step 4: Lossless Decryption & Tagging with FFmpeg
+      // Step 4: Request Official Content License & Download URL
       this.emitProgress(asin, {
-        status: 'converting',
-        percentage: 88,
-        speedText: 'Decrypting & embedding chapters...',
+        status: 'downloading',
+        percentage: 12,
+        speedText: 'Requesting download license...',
         title: book.title
       });
 
-      const activationBytes = this.tokenManager.session?.activationBytes || null;
+      const license = await this.audibleClient.getContentLicense(asin);
+      const isAaxc = !!(license.voucher && license.voucher.key && license.voucher.iv);
+      const ext = isAaxc ? '.temp.aaxc' : '.temp.aax';
+      const safeTitle = AbsOrganizer.sanitize(book.title);
+      const tempAudioPath = path.join(targetDir, `${safeTitle}${ext}`);
+      const finalM4bPath = path.join(targetDir, `${safeTitle}.m4b`);
+
+      // Step 5: Real Audio Stream Download with live byte/speed tracking
+      const audioResponse = await fetch(license.offlineUrl, {
+        signal: abortController.signal
+      });
+
+      if (!audioResponse.ok) {
+        throw new Error(`Failed to download audio stream from Audible CDN (${audioResponse.status}): ${audioResponse.statusText}`);
+      }
+
+      const totalBytes = license.sizeBytes || parseInt(audioResponse.headers.get('content-length'), 10) || 0;
+      let downloadedBytes = 0;
+      let lastProgressUpdate = Date.now();
+      let lastBytes = 0;
+
+      const fileStream = fs.createWriteStream(tempAudioPath);
+      const reader = audioResponse.body.getReader();
+
+      try {
+        while (true) {
+          if (abortController.signal.aborted) {
+            throw new Error('Download cancelled by user.');
+          }
+
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          fileStream.write(Buffer.from(value));
+          downloadedBytes += value.length;
+
+          const now = Date.now();
+          if (now - lastProgressUpdate >= 350) {
+            const timeDeltaSec = (now - lastProgressUpdate) / 1000;
+            const bytesDelta = downloadedBytes - lastBytes;
+            const speedBytesSec = timeDeltaSec > 0 ? bytesDelta / timeDeltaSec : 0;
+            const speedMbSec = (speedBytesSec / (1024 * 1024)).toFixed(1);
+            
+            const pct = totalBytes > 0 
+              ? Math.min(85, 15 + Math.round((downloadedBytes / totalBytes) * 70))
+              : 50;
+
+            this.emitProgress(asin, {
+              status: 'downloading',
+              percentage: pct,
+              bytesDownloaded: downloadedBytes,
+              totalBytes: totalBytes || downloadedBytes,
+              speedText: `${speedMbSec} MB/s`,
+              title: book.title,
+              coverUrl: book.coverUrl
+            });
+
+            lastProgressUpdate = now;
+            lastBytes = downloadedBytes;
+          }
+        }
+      } finally {
+        await new Promise((resolve) => fileStream.end(resolve));
+      }
+
+      // Step 6: Lossless Decryption & Tagging with FFmpeg
+      this.emitProgress(asin, {
+        status: 'converting',
+        percentage: 88,
+        speedText: 'Losslessly decrypting AAC stream into M4B...',
+        title: book.title
+      });
+
+      const chapters = license.chapterInfo?.chapters || book.chapters || [];
 
       await Decryptor.decryptToM4b({
         inputPath: tempAudioPath,
         outputPath: finalM4bPath,
         activationBytes,
+        voucher: license.voucher,
         book,
+        chapters,
         coverPath,
         onProgress: (p) => {
           this.emitProgress(asin, {
             status: 'converting',
             percentage: 88 + Math.round(p.percent * 0.1),
-            speedText: 'Writing M4B chapters...',
+            speedText: 'Writing M4B container & chapters...',
             title: book.title
           });
         }
@@ -157,7 +213,7 @@ class Downloader {
         if (fs.existsSync(tempAudioPath)) fs.unlinkSync(tempAudioPath);
       } catch (_) {}
 
-      // Step 5: Generate Audiobookshelf metadata.json
+      // Step 7: Generate Audiobookshelf metadata.json
       if (settings.generateAbsMetadata) {
         AbsOrganizer.writeAbsMetadata(targetDir, book);
       }

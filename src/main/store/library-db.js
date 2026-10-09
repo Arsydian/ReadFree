@@ -89,6 +89,7 @@ class LibraryDB {
 
     this.load();
     this.purgePlaceholders();
+    this.cleanCorruptedDownloads();
   }
 
   /**
@@ -146,6 +147,45 @@ class LibraryDB {
       console.log(`[LibraryDB] Purged ${purgedCount} placeholder books from library.`);
     }
     return purgedCount;
+  }
+
+  /**
+   * Scans library for corrupted or dummy download files (e.g. <= 1KB files)
+   * and resets book status to 'ready' so they can be properly downloaded.
+   */
+  cleanCorruptedDownloads() {
+    let repaired = 0;
+    for (const [asin, book] of this.books.entries()) {
+      if (book.status === 'downloaded') {
+        let isCorrupted = false;
+        if (!book.m4bPath || !fs.existsSync(book.m4bPath)) {
+          isCorrupted = true;
+        } else {
+          try {
+            const stats = fs.statSync(book.m4bPath);
+            if (stats.size <= 1024) {
+              isCorrupted = true;
+              try { fs.unlinkSync(book.m4bPath); } catch (_) {}
+            }
+          } catch (_) {
+            isCorrupted = true;
+          }
+        }
+
+        if (isCorrupted) {
+          book.status = 'ready';
+          book.m4bPath = null;
+          book.downloadedAt = null;
+          repaired++;
+        }
+      }
+    }
+
+    if (repaired > 0) {
+      console.log(`[LibraryDB] Reset ${repaired} books with corrupted/sub-1KB audio files to ready.`);
+      this.saveBooks();
+    }
+    return repaired;
   }
 
   /**

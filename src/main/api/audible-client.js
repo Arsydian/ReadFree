@@ -240,40 +240,85 @@ class AudibleClient {
   }
 
   /**
-   * Requests download and license information for a specific ASIN.
-   * @param {string} asin 
+   * Requests an official content download license and decryption metadata for an audiobook.
+   * Calls Audible's /1.0/content/{asin}/licenserequest with ADP signature.
+   * 
+   * @param {string} asin Audible product ASIN
+   * @returns {Promise<{
+   *   offlineUrl: string,
+   *   format: string,
+   *   codec: string,
+   *   sizeBytes: number,
+   *   voucher: { key: string, iv: string } | null,
+   *   chapterInfo: Object | null,
+   *   pdfUrl: string | null
+   * }>}
    */
-  async getDownloadStream(asin) {
+  async getContentLicense(asin) {
     const baseUrl = this.getBaseUrl();
     const licenseUrl = `${baseUrl}/1.0/content/${asin}/licenserequest`;
     const payload = {
+      supported_media_features: {
+        drm_types: ['Adrm', 'Mpeg'],
+        codecs: ['mp4a.40.2']
+      },
+      consumption_type: 'Download',
       quality: 'High',
-      response_groups: 'content_reference,content_url,offline_url,voucher'
+      spatial: false,
+      response_groups: 'last_position_heard,pdf_url,content_reference,chapter_info'
     };
 
-    const headers = await this.buildRequestHeaders('POST', licenseUrl, payload);
+    const payloadStr = JSON.stringify(payload);
+    const headers = await this.buildRequestHeaders('POST', licenseUrl, payloadStr);
     headers['Content-Type'] = 'application/json';
 
     const response = await fetch(licenseUrl, {
       method: 'POST',
       headers,
-      body: JSON.stringify(payload)
+      body: payloadStr
     });
 
     if (!response.ok) {
-      // If direct license endpoint requires alternate profile, fallback to standard stream
-      return {
-        streamUrl: `https://content.audible.com/audio/${asin}.aax`,
-        voucher: null,
-        quality: 'High'
-      };
+      const errText = await response.text();
+      throw new Error(`Content license request failed (${response.status}): ${errText}`);
     }
 
     const data = await response.json();
+    const license = data.content_license;
+    if (!license || license.status_code !== 'Granted') {
+      const reason = license?.message || license?.status_code || JSON.stringify(data);
+      throw new Error(`Audible content license was not granted: ${reason}`);
+    }
+
+    const metadata = license.content_metadata || {};
+    const ref = metadata.content_reference || {};
+    const offlineUrl = metadata.content_url?.offline_url;
+
+    if (!offlineUrl) {
+      throw new Error(`No offline download URL returned in Audible content license for ASIN ${asin}`);
+    }
+
     return {
-      streamUrl: data.content_url || data.offline_url,
-      voucher: data.voucher || null,
-      quality: data.quality || 'High'
+      offlineUrl,
+      format: ref.content_format || 'AAX',
+      codec: ref.codec || 'mp4a.40.2',
+      sizeBytes: ref.content_size_in_bytes || 0,
+      voucher: license.voucher || null,
+      chapterInfo: metadata.chapter_info || null,
+      pdfUrl: license.pdf_url || null
+    };
+  }
+
+  /**
+   * Compatibility wrapper for getContentLicense.
+   * @param {string} asin
+   */
+  async getDownloadStream(asin) {
+    const license = await this.getContentLicense(asin);
+    return {
+      streamUrl: license.offlineUrl,
+      voucher: license.voucher,
+      quality: 'High'
     };
   }
 }

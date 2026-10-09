@@ -169,6 +169,64 @@ class TokenManager {
   }
 
   /**
+   * Fetches the user's Audible activation bytes from Audible's license server
+   * using authenticated ADP request signing.
+   * @returns {Promise<string>} 8-character hex activation bytes
+   */
+  async fetchActivationBytes() {
+    if (!this.session?.adpToken || !this.session?.devicePrivateKey) {
+      throw new Error('Cannot fetch activation bytes without ADP credentials.');
+    }
+
+    const pathWithQuery = '/license/token?action=register&player_manuf=Audible,iPhone&player_model=iPhone';
+    const profile = DeviceProfile.getProfile();
+    const signed = DeviceProfile.signAdpRequest({
+      method: 'GET',
+      pathWithQuery,
+      body: '',
+      adpToken: this.session.adpToken,
+      privateKeyPem: this.session.devicePrivateKey
+    });
+
+    const headers = {
+      'User-Agent': profile.userAgent,
+      'x-adp-token': this.session.adpToken,
+      'x-adp-alg': 'SHA256withRSA:1.0',
+      'x-adp-signature': signed.signatureHeader
+    };
+
+    const accessToken = await this.getValidAccessToken();
+    if (accessToken) {
+      headers['Authorization'] = `Bearer ${accessToken}`;
+    }
+
+    const response = await fetch(`https://www.audible.com${pathWithQuery}`, {
+      method: 'GET',
+      headers
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to fetch activation bytes (${response.status}): ${response.statusText}`);
+    }
+
+    const arrayBuf = await response.arrayBuffer();
+    const buf = Buffer.from(arrayBuf);
+    const ACTIVATION_BLOB_SZ = 0x238; // 568 bytes
+
+    if (buf.length < ACTIVATION_BLOB_SZ) {
+      throw new Error(`Audible activation response too short: ${buf.length} bytes`);
+    }
+
+    const actBytes = buf.readUInt32LE(buf.length - ACTIVATION_BLOB_SZ);
+    const hex = actBytes.toString(16).padStart(8, '0');
+
+    this.session.activationBytes = hex;
+    this.save();
+    console.log('[TokenManager] Successfully retrieved activation bytes:', hex);
+    return hex;
+  }
+
+  /**
    * Sets new session tokens.
    * @param {Object} sessionData 
    */
