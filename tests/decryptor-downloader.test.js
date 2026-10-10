@@ -59,5 +59,18 @@ test('Downloader.findRetainedSource reuses only complete, size-verified encrypte
   fs.writeFileSync(paths.aaxc, Buffer.alloc(1000, 1));
   assert.strictEqual(Downloader.findRetainedSource(paths, 'B0GGNKSBRQ'), null);
 
+  // Correct size with quality specified
+  fs.writeFileSync(paths.aaxc, Buffer.alloc(2048, 1));
+  fs.writeFileSync(paths.licenseJson, JSON.stringify({
+    asin: 'B0GGNKSBRQ', format: 'aaxc', quality: 'High', voucher: { key: KEY, iv: IV }, sizeBytes: 2048
+  }));
+
+  // Re-uses when quality matches
+  assert.ok(Downloader.findRetainedSource(paths, 'B0GGNKSBRQ', 'High'));
+
+  // Refuses and returns null when user changed setting to Normal quality
+  assert.strictEqual(Downloader.findRetainedSource(paths, 'B0GGNKSBRQ', 'Normal'), null);
+
   fs.rmSync(dir, { recursive: true, force: true });
 });
+

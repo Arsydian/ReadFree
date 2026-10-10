@@ -140,3 +140,22 @@ test('LibraryDB permanently blocks and purges placeholder and demo books', () =>
   // Cleanup
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
+
+test('LibraryDB defaults audioQuality to High and persists changes', () => {
+  const tmpDir = path.join(os.tmpdir(), `readfree_settings_test_${Date.now()}`);
+  fs.mkdirSync(tmpDir, { recursive: true });
+
+  const db = new LibraryDB(tmpDir);
+  const settings = db.getSettings();
+  assert.strictEqual(settings.audioQuality, 'High', 'Default audioQuality must be High (Highest)');
+
+  // Update setting
+  db.updateSettings({ audioQuality: 'Normal' });
+  assert.strictEqual(db.getSettings().audioQuality, 'Normal');
+
+  // Verify persistence across reload
+  const reloaded = new LibraryDB(tmpDir);
+  assert.strictEqual(reloaded.getSettings().audioQuality, 'Normal');
+
+  fs.rmSync(tmpDir, { recursive: true, force: true });
+});

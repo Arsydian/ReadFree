@@ -73,12 +73,18 @@ class Downloader {
    * sidecar, or null if none is usable.
    * @param {ReturnType<typeof Downloader.getPaths>} paths
    * @param {string} asin
+   * @param {string} [requestedQuality] Optional requested quality ('High' | 'Normal')
    */
-  static findRetainedSource(paths, asin) {
+  static findRetainedSource(paths, asin, requestedQuality = null) {
     try {
       if (!fs.existsSync(paths.licenseJson)) return null;
       const lic = JSON.parse(fs.readFileSync(paths.licenseJson, 'utf8'));
       if (lic.asin !== asin) return null;
+
+      // If user changed audio quality preference, re-download at the requested quality
+      if (requestedQuality && lic.quality && lic.quality !== requestedQuality) {
+        return null;
+      }
 
       const encryptedPath = lic.format === 'aaxc' ? paths.aaxc : paths.aax;
       if (!fs.existsSync(encryptedPath)) return null;
@@ -146,10 +152,11 @@ class Downloader {
       // Step 2: Re-use a retained encrypted source if one exists (no Amazon requests needed)
       let licenseRecord;
       let pdfPath = book.pdfPath || null;
-      const retained = Downloader.findRetainedSource(paths, asin);
+      const requestedQuality = settings.audioQuality === 'Normal' ? 'Normal' : 'High';
+      const retained = Downloader.findRetainedSource(paths, asin, requestedQuality);
 
       if (retained) {
-        console.log(`[Downloader] Re-using retained encrypted source: ${retained.encryptedPath}`);
+        console.log(`[Downloader] Re-using retained encrypted source (${retained.license.quality || 'default'} quality): ${retained.encryptedPath}`);
         encryptedPath = retained.encryptedPath;
         licenseRecord = retained.license;
         this.emitProgress(asin, {
@@ -159,15 +166,15 @@ class Downloader {
           title: book.title
         });
       } else {
-        // Step 3: Request Official Content License & Download URL
+        // Step 3: Request Official Content License & Download URL with user-selected quality
         this.emitProgress(asin, {
           status: 'downloading',
           percentage: 10,
-          speedText: 'Requesting download license...',
+          speedText: `Requesting ${requestedQuality === 'Normal' ? 'Standard' : 'Highest'} quality download license...`,
           title: book.title
         });
 
-        const license = await this.audibleClient.getContentLicense(asin);
+        const license = await this.audibleClient.getContentLicense(asin, { quality: requestedQuality });
         const isAaxc = !!license.voucher;
 
         // Activation bytes are only meaningful for legacy AAX (no voucher)
@@ -265,6 +272,7 @@ class Downloader {
         licenseRecord = {
           asin,
           format: isAaxc ? 'aaxc' : 'aax',
+          quality: requestedQuality,
           voucher: isAaxc ? { key: license.voucher.key, iv: license.voucher.iv } : null,
           activationBytes: isAaxc ? null : activationBytes,
           chapterInfo: license.chapterInfo || null,
@@ -346,6 +354,7 @@ class Downloader {
         encryptedPath,
         pdfPath: pdfPath || null,
         chapters: normalizedChapters,
+        audioQuality: requestedQuality,
         downloadedAt: new Date().toISOString(),
         lastError: null
       });

@@ -83,6 +83,7 @@ class LibraryDB {
       organizeAbs: true,
       generateAbsMetadata: true,
       downloadPdfs: true,
+      audioQuality: 'High',
       marketplace: 'us',
       lastSyncTimestamp: null
     };

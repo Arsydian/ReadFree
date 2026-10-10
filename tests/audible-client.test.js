@@ -164,3 +164,43 @@ test('AudibleClient getContentLicense aborts when an AAXC voucher cannot be decr
   }
 });
 
+test('AudibleClient getContentLicense respects requested quality option', async () => {
+  const mockTokenManager = {
+    session: { marketplace: 'us', deviceType: 'A2CZJZGLK2JJVM', deviceSerial: 'S' },
+    getDeviceSerial: () => 'S'
+  };
+  const client = new AudibleClient(mockTokenManager);
+  client.buildRequestHeaders = async () => ({});
+
+  let capturedPayloads = [];
+  const originalFetch = global.fetch;
+  global.fetch = async (_url, opts) => {
+    capturedPayloads.push(JSON.parse(opts.body));
+    return {
+      ok: true,
+      json: async () => ({
+        content_license: {
+          status_code: 'Granted',
+          drm_type: 'Adrm',
+          content_metadata: { content_url: { offline_url: 'https://example.invalid/book.aax' } }
+        }
+      })
+    };
+  };
+
+  try {
+    // 1. Default quality is High
+    const lic1 = await client.getContentLicense('B0TESTASIN1');
+    assert.strictEqual(capturedPayloads[0].quality, 'High');
+    assert.strictEqual(lic1.quality, 'High');
+
+    // 2. Explicit Normal quality
+    const lic2 = await client.getContentLicense('B0TESTASIN1', { quality: 'Normal' });
+    assert.strictEqual(capturedPayloads[1].quality, 'Normal');
+    assert.strictEqual(lic2.quality, 'Normal');
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+

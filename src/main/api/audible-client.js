@@ -297,8 +297,11 @@ class AudibleClient {
    * Calls Audible's /1.0/content/{asin}/licenserequest with ADP signature.
    * 
    * @param {string} asin Audible product ASIN
+   * @param {Object} [options]
+   * @param {string} [options.quality='High'] 'High' (Highest) or 'Normal'
    * @returns {Promise<{
    *   offlineUrl: string,
+   *   quality: string,
    *   format: string,
    *   codec: string,
    *   sizeBytes: number,
@@ -307,7 +310,8 @@ class AudibleClient {
    *   pdfUrl: string | null
    * }>}
    */
-  async getContentLicense(asin) {
+  async getContentLicense(asin, options = {}) {
+    const quality = (options && options.quality === 'Normal') ? 'Normal' : 'High';
     const baseUrl = this.getBaseUrl();
     const licenseUrl = `${baseUrl}/1.0/content/${asin}/licenserequest`;
     const payload = {
@@ -319,7 +323,7 @@ class AudibleClient {
         catalog_samples: false
       },
       consumption_type: 'Download',
-      quality: 'High',
+      quality,
       spatial: false,
       response_groups: 'last_position_heard,pdf_url,content_reference,chapter_info'
     };
@@ -374,6 +378,7 @@ class AudibleClient {
 
     return {
       offlineUrl,
+      quality,
       format: ref.content_format || 'AAX',
       codec: ref.codec || 'mp4a.40.2',
       sizeBytes: ref.content_size_in_bytes || 0,
@@ -386,13 +391,14 @@ class AudibleClient {
   /**
    * Compatibility wrapper for getContentLicense.
    * @param {string} asin
+   * @param {Object} [options]
    */
-  async getDownloadStream(asin) {
-    const license = await this.getContentLicense(asin);
+  async getDownloadStream(asin, options = {}) {
+    const license = await this.getContentLicense(asin, options);
     return {
       streamUrl: license.offlineUrl,
       voucher: license.voucher,
-      quality: 'High'
+      quality: license.quality || 'High'
     };
   }
 }

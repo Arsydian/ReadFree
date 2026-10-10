@@ -18,6 +18,7 @@ export class SettingsView {
     this.toggleAbsLayout = document.getElementById('toggleAbsLayout');
     this.toggleAbsMetadata = document.getElementById('toggleAbsMetadata');
     this.toggleDownloadPdfs = document.getElementById('toggleDownloadPdfs');
+    this.audioQualitySelect = document.getElementById('settingAudioQualitySelect');
     this.marketplaceSelect = document.getElementById('settingMarketplaceSelect');
     this.btnForceSync = document.getElementById('btnSettingsForceSync');
     this.btnResetDb = document.getElementById('btnResetDatabase');
@@ -33,6 +34,9 @@ export class SettingsView {
       this.toggleAbsLayout.checked = settings.organizeAbs !== false;
       this.toggleAbsMetadata.checked = settings.generateAbsMetadata !== false;
       this.toggleDownloadPdfs.checked = settings.downloadPdfs !== false;
+      if (this.audioQualitySelect) {
+        this.audioQualitySelect.value = settings.audioQuality || 'High';
+      }
       this.marketplaceSelect.value = settings.marketplace || 'us';
     } catch (err) {
       console.error('Failed to load settings:', err);
@@ -66,6 +70,15 @@ export class SettingsView {
       await window.api.settings.update({ downloadPdfs: e.target.checked });
       this.app.showToast('Updated PDF booklet preference', 'info');
     });
+
+    // Audio Quality selection
+    if (this.audioQualitySelect) {
+      this.audioQualitySelect.addEventListener('change', async (e) => {
+        await window.api.settings.update({ audioQuality: e.target.value });
+        const label = e.target.value === 'Normal' ? 'Normal Quality' : 'Highest Quality';
+        this.app.showToast(`Updated download audio quality to ${label}`, 'info');
+      });
+    }
 
     // Marketplace change
     this.marketplaceSelect.addEventListener('change', async (e) => {
