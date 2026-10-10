@@ -194,6 +194,7 @@ function registerIpcHandlers() {
 
   // --- Library Handlers ---
   ipcMain.handle('library:get-books', async (_event, filters) => {
+    libraryDB.cleanCorruptedDownloads();
     return libraryDB.getBooks(filters);
   });
 
@@ -227,6 +228,14 @@ function registerIpcHandlers() {
       return true;
     }
     const settings = libraryDB.getSettings();
+    if (book) {
+      const AbsOrganizer = require('./organizer/abs-organizer');
+      const bookDir = AbsOrganizer.getBookDirectory(settings.outputDir, book);
+      if (fs.existsSync(bookDir)) {
+        shell.openPath(bookDir);
+        return true;
+      }
+    }
     if (fs.existsSync(settings.outputDir)) {
       shell.openPath(settings.outputDir);
       return true;

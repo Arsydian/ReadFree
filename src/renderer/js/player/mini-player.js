@@ -44,9 +44,6 @@ export class MiniPlayer {
 
     this.currentBook = null;
     this.chapters = [];
-    this.simulatedDuration = 0;
-    this.simulatedTime = 0;
-    this.simInterval = null;
 
     this.initEvents();
   }
@@ -119,11 +116,11 @@ export class MiniPlayer {
   getDuration() {
     return this.audio.duration && !isNaN(this.audio.duration) 
       ? this.audio.duration 
-      : (this.simulatedDuration || (this.currentBook?.runtimeSeconds || 3600));
+      : (this.currentBook?.runtimeSeconds || 0);
   }
 
   getCurrentTime() {
-    return this.audio.src ? this.audio.currentTime : this.simulatedTime;
+    return this.audio.src ? this.audio.currentTime : 0;
   }
 
   seekRelative(deltaSeconds) {
@@ -135,9 +132,6 @@ export class MiniPlayer {
   seekTo(targetSeconds) {
     if (this.audio.src) {
       this.audio.currentTime = targetSeconds;
-    } else {
-      this.simulatedTime = targetSeconds;
-      this.updateProgress(this.simulatedTime, this.simulatedDuration);
     }
   }
 
@@ -146,37 +140,18 @@ export class MiniPlayer {
 
     if (this.audio.src) {
       if (this.audio.paused) {
-        this.audio.play().catch(() => this.fallbackSimulatePlay());
+        this.audio.play().catch(err => {
+          this.setPlayingState(false);
+          this.app.showToast(`Playback error: ${err.message}`, 'error');
+        });
         this.setPlayingState(true);
       } else {
         this.audio.pause();
         this.setPlayingState(false);
       }
     } else {
-      // Simulation mode for preview
-      if (this.simInterval) {
-        clearInterval(this.simInterval);
-        this.simInterval = null;
-        this.setPlayingState(false);
-      } else {
-        this.fallbackSimulatePlay();
-      }
+      this.app.showToast('No audio file loaded. Please download this audiobook first.', 'warning');
     }
-  }
-
-  fallbackSimulatePlay() {
-    this.setPlayingState(true);
-    if (this.simInterval) clearInterval(this.simInterval);
-    this.simInterval = setInterval(() => {
-      this.simulatedTime += 1;
-      if (this.simulatedTime >= this.simulatedDuration) {
-        this.simulatedTime = 0;
-        clearInterval(this.simInterval);
-        this.simInterval = null;
-        this.setPlayingState(false);
-      }
-      this.updateProgress(this.simulatedTime, this.simulatedDuration);
-    }, 1000);
   }
 
   setPlayingState(isPlaying) {
@@ -191,8 +166,6 @@ export class MiniPlayer {
     this.currentBook = book;
     this.titleLabel.textContent = book.title;
     this.authorLabel.textContent = book.authors;
-    this.simulatedDuration = book.runtimeSeconds || 3600;
-    this.simulatedTime = 0;
 
     if (book.coverUrl) {
       this.thumbImg.src = book.coverUrl;
@@ -205,9 +178,7 @@ export class MiniPlayer {
 
     // Load chapters
     this.chapters = book.chapters || [
-      { title: 'Chapter 1', startTime: 0, duration: 1800 },
-      { title: 'Chapter 2', startTime: 1800, duration: 2100 },
-      { title: 'Chapter 3', startTime: 3900, duration: 2400 }
+      { title: 'Chapter 1', startTime: 0, duration: 1800 }
     ];
 
     this.renderChapters();
@@ -216,16 +187,22 @@ export class MiniPlayer {
     const audioPath = await window.api.player.getPlayablePath(book.asin);
     if (audioPath) {
       this.audio.src = `file://${audioPath.replace(/\\/g, '/')}`;
-      this.audio.play().catch(() => {
-        this.fallbackSimulatePlay();
-      });
-      this.setPlayingState(true);
+      try {
+        await this.audio.play();
+        this.setPlayingState(true);
+        this.updateProgress(0, this.audio.duration || book.runtimeSeconds);
+        this.app.showToast(`Now Playing: ${book.title}`, 'info');
+      } catch (err) {
+        console.error('Audio playback error:', err);
+        this.setPlayingState(false);
+        this.app.showToast(`Unable to play audio: ${err.message}`, 'error');
+      }
     } else {
-      this.fallbackSimulatePlay();
+      this.audio.src = '';
+      this.setPlayingState(false);
+      this.updateProgress(0, book.runtimeSeconds || 0);
+      this.app.showToast(`Cannot play "${book.title}": Audio file not found on disk. Please download it first.`, 'warning');
     }
-
-    this.updateProgress(0, this.simulatedDuration);
-    this.app.showToast(`Now Playing: ${book.title}`, 'info');
   }
 
   updateProgress(currentTime, duration) {
