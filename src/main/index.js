@@ -273,6 +273,19 @@ function registerIpcHandlers() {
   });
 
   ipcMain.handle('downloads:clear-completed', async () => {
+    for (const book of libraryDB.getBooks()) {
+      if (book.status === 'failed') {
+        libraryDB.updateBookStatus(book.asin, 'ready', { lastError: null });
+      }
+    }
+    return { success: true };
+  });
+
+  ipcMain.handle('downloads:dismiss', async (_event, asin) => {
+    const book = libraryDB.getBook(asin);
+    if (book && book.status === 'failed') {
+      libraryDB.updateBookStatus(asin, 'ready', { lastError: null });
+    }
     return { success: true };
   });
 

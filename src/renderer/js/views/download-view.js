@@ -18,17 +18,42 @@ export class DownloadView {
     this.activeDownloads = new Map(); // asin -> download data
 
     this.initEvents();
+    this.loadQueue();
+  }
+
+  async loadQueue() {
+    try {
+      if (window.api?.downloads?.getQueue) {
+        const queue = await window.api.downloads.getQueue();
+        if (Array.isArray(queue)) {
+          queue.forEach(item => {
+            if (!this.activeDownloads.has(item.asin)) {
+              this.activeDownloads.set(item.asin, item);
+            }
+          });
+          this.render();
+        }
+      }
+    } catch (e) {
+      console.warn('[DownloadView] Failed to load queue:', e);
+    }
   }
 
   initEvents() {
-    this.btnClear.addEventListener('click', () => {
-      // Remove completed or cancelled items
+    this.btnClear.addEventListener('click', async () => {
+      // Remove completed, cancelled, or failed items
       for (const [asin, data] of this.activeDownloads.entries()) {
-        if (data.status === 'completed' || data.status === 'ready') {
+        if (data.status === 'completed' || data.status === 'ready' || data.status === 'failed') {
           this.activeDownloads.delete(asin);
         }
       }
+      if (window.api?.downloads?.clearCompleted) {
+        await window.api.downloads.clearCompleted();
+      }
       this.render();
+      if (this.app.libraryView) {
+        this.app.libraryView.loadBooks();
+      }
     });
 
     // Listen to real-time download events from preload bridge
@@ -118,10 +143,12 @@ export class DownloadView {
 
             ${isFailed ? `
               <button class="btn btn-primary btn-sm btn-retry-download" title="Retry download">Retry</button>
+              <button class="btn btn-glass btn-sm btn-dismiss-download" title="Dismiss failed download">Dismiss</button>
             ` : ''}
 
             ${isCompleted ? `
               <button class="btn btn-glass btn-sm btn-folder-download" title="Show file in folder">Open</button>
+              <button class="btn btn-glass btn-sm btn-dismiss-download" title="Remove from queue">Dismiss</button>
             ` : ''}
           </div>
         </div>
@@ -147,6 +174,20 @@ export class DownloadView {
         retryBtn.addEventListener('click', async () => {
           await window.api.downloads.retry(asin);
           this.app.showToast('Retrying download...', 'info');
+        });
+      }
+
+      const dismissBtn = card.querySelector('.btn-dismiss-download');
+      if (dismissBtn) {
+        dismissBtn.addEventListener('click', async () => {
+          this.activeDownloads.delete(asin);
+          if (window.api?.downloads?.dismiss) {
+            await window.api.downloads.dismiss(asin);
+          }
+          this.render();
+          if (this.app.libraryView) {
+            this.app.libraryView.loadBooks();
+          }
         });
       }
 

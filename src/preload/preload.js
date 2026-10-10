@@ -37,6 +37,7 @@ contextBridge.exposeInMainWorld('api', {
     start: (asin) => ipcRenderer.invoke('downloads:start', asin),
     cancel: (asin) => ipcRenderer.invoke('downloads:cancel', asin),
     retry: (asin) => ipcRenderer.invoke('downloads:retry', asin),
+    dismiss: (asin) => ipcRenderer.invoke('downloads:dismiss', asin),
     getQueue: () => ipcRenderer.invoke('downloads:get-queue'),
     clearCompleted: () => ipcRenderer.invoke('downloads:clear-completed'),
     onProgress: (callback) => {
