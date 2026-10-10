@@ -301,6 +301,7 @@ body {
   overflow: hidden;
   position: relative;
   background: transparent;
+  min-height: 0;
 }
 
 /* View Views Containers */
@@ -310,6 +311,7 @@ body {
   padding: 24px 32px;
   display: none;
   animation: fadeIn var(--transition-normal);
+  min-height: 0;
 }
 
 .view-container.active {
