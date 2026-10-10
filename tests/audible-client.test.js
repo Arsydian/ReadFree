@@ -203,4 +203,108 @@ test('AudibleClient getContentLicense respects requested quality option', async 
   }
 });
 
+test('AudibleClient fetchLibrary paginates completely across multiple pages', async () => {
+  const mockTokenManager = {
+    isAuthenticated: () => true,
+    session: { marketplace: 'us' }
+  };
+  const client = new AudibleClient(mockTokenManager);
+  client.buildRequestHeaders = async () => ({});
+
+  const requestedUrls = [];
+  const originalFetch = global.fetch;
+
+  // Mock API returning 3 pages (total 5 items with pageSize 2):
+  // Page 1: 2 items, total_results: 5
+  // Page 2: 2 items, total_results: 5
+  // Page 3: 1 item, total_results: 5
+  global.fetch = async (url) => {
+    requestedUrls.push(url);
+    const parsedUrl = new URL(url);
+    const page = parseInt(parsedUrl.searchParams.get('page'), 10);
+    
+    let items = [];
+    if (page === 1) {
+      items = [
+        { asin: 'B001', title: 'Book 1', authors: [{ name: 'Author A' }] },
+        { asin: 'B002', title: 'Book 2', authors: [{ name: 'Author B' }] }
+      ];
+    } else if (page === 2) {
+      items = [
+        { asin: 'B003', title: 'Book 3', authors: [{ name: 'Author C' }] },
+        { asin: 'B004', title: 'Book 4', authors: [{ name: 'Author D' }] }
+      ];
+    } else if (page === 3) {
+      items = [
+        { asin: 'B005', title: 'Book 5', authors: [{ name: 'Author E' }] }
+      ];
+    }
+
+    return {
+      ok: true,
+      json: async () => ({
+        items,
+        total_results: 5
+      })
+    };
+  };
+
+  try {
+    const progressUpdates = [];
+    const books = await client.fetchLibrary({
+      numResults: 2,
+      onPageFetched: (p) => progressUpdates.push(p)
+    });
+
+    assert.strictEqual(books.length, 5);
+    assert.strictEqual(books[0].asin, 'B001');
+    assert.strictEqual(books[4].asin, 'B005');
+    assert.strictEqual(requestedUrls.length, 3);
+    assert.ok(requestedUrls[0].includes('page=1'));
+    assert.ok(requestedUrls[1].includes('page=2'));
+    assert.ok(requestedUrls[2].includes('page=3'));
+    assert.strictEqual(progressUpdates.length, 3);
+    assert.strictEqual(progressUpdates[2].fetchedCount, 5);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test('AudibleClient fetchLibrary paginates successfully when API provides no total count metadata', async () => {
+  const mockTokenManager = {
+    isAuthenticated: () => true,
+    session: { marketplace: 'us' }
+  };
+  const client = new AudibleClient(mockTokenManager);
+  client.buildRequestHeaders = async () => ({});
+
+  const requestedUrls = [];
+  const originalFetch = global.fetch;
+
+  // Page 1 returns full page of 2 items (no total metadata)
+  // Page 2 returns 1 item (< pageSize), signaling end
+  global.fetch = async (url) => {
+    requestedUrls.push(url);
+    const parsedUrl = new URL(url);
+    const page = parseInt(parsedUrl.searchParams.get('page'), 10);
+    
+    const items = page === 1 
+      ? [{ asin: 'B101', title: 'B1' }, { asin: 'B102', title: 'B2' }]
+      : [{ asin: 'B103', title: 'B3' }];
+
+    return {
+      ok: true,
+      json: async () => ({ items })
+    };
+  };
+
+  try {
+    const books = await client.fetchLibrary({ numResults: 2 });
+    assert.strictEqual(books.length, 3);
+    assert.strictEqual(requestedUrls.length, 2);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
 

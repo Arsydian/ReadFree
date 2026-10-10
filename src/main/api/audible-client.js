@@ -169,8 +169,10 @@ class AudibleClient {
 
   /**
    * Fetches the entire library with pagination.
+   * Handles multi-page catalogs, total_results / total_pages calculation,
+   * and clean termination when the final page is reached.
    * @param {Object} [options]
-   * @param {number} [options.numResults=50] Page size
+   * @param {number} [options.numResults=100] Page size (up to 1000 per Audible API spec)
    * @param {Function} [options.onPageFetched] Progress callback
    * @returns {Promise<Array<Object>>}
    */
@@ -179,14 +181,14 @@ class AudibleClient {
       throw new Error('Not authenticated. Please sign in to your Audible account or import auth.json.');
     }
 
-    const pageSize = options.numResults || 50;
+    const pageSize = options.numResults || 100;
     const allBooks = [];
     let page = 1;
-    let totalPages = 1;
+    let totalPages = null;
     const baseUrl = this.getBaseUrl();
 
     try {
-      do {
+      while (true) {
         const queryParams = new URLSearchParams({
           response_groups: 'product_desc,contributors,media,series,relationships,product_attrs',
           num_results: pageSize.toString(),
@@ -220,19 +222,51 @@ class AudibleClient {
           allBooks.push(this.parseBookItem(item));
         }
 
-        if (data.total_pages) {
+        // Determine total pages from API response if metadata is present
+        const totalResults = typeof data.total_results === 'number'
+          ? data.total_results
+          : (typeof data.total_count === 'number' ? data.total_count : null);
+
+        if (typeof data.total_pages === 'number' && data.total_pages > 0) {
           totalPages = data.total_pages;
-        } else if (items.length < pageSize) {
-          break;
+        } else if (totalResults !== null && totalResults >= 0) {
+          totalPages = Math.ceil(totalResults / pageSize);
         }
 
         if (options.onPageFetched) {
-          options.onPageFetched({ page, totalPages, fetchedCount: allBooks.length });
+          options.onPageFetched({
+            page,
+            totalPages: totalPages || (items.length < pageSize ? page : page + 1),
+            fetchedCount: allBooks.length,
+            totalResults: totalResults || allBooks.length
+          });
+        }
+
+        // 1. If no items returned on this page, catalog is exhausted
+        if (items.length === 0) {
+          break;
+        }
+
+        // 2. If fewer items returned than requested page size, this was the final page
+        if (items.length < pageSize) {
+          break;
+        }
+
+        // 3. If total pages is known and we reached or exceeded it, we are done
+        if (totalPages !== null && page >= totalPages) {
+          break;
+        }
+
+        // 4. Safety limit to prevent runaway loops (max 500 pages)
+        if (page >= 500) {
+          console.warn(`[AudibleClient] Reached maximum pagination limit (500 pages, ${allBooks.length} books).`);
+          break;
         }
 
         page++;
-      } while (page <= totalPages);
+      }
 
+      console.log(`[AudibleClient] Successfully fetched ${allBooks.length} total books across ${page} page(s).`);
       return allBooks;
     } catch (err) {
       console.error('[AudibleClient] Error fetching library from API:', err);
