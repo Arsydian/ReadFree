@@ -135,3 +135,32 @@ test('AudibleClient decryptVoucher returns null safely when customerId is missin
   assert.strictEqual(client.decryptVoucher('bm90X3ZhbGlkX2Flcw==', 'B0TESTASIN1'), null);
 });
 
+test('AudibleClient getContentLicense aborts when an AAXC voucher cannot be decrypted', async () => {
+  const mockTokenManager = {
+    session: { marketplace: 'us', deviceType: 'A2CZJZGLK2JJVM', deviceSerial: 'S' },
+    getDeviceSerial: () => 'S',
+    ensureUserProfile: async () => {}
+  };
+  const client = new AudibleClient(mockTokenManager);
+  client.buildRequestHeaders = async () => ({});
+
+  const originalFetch = global.fetch;
+  global.fetch = async () => ({
+    ok: true,
+    json: async () => ({
+      content_license: {
+        status_code: 'Granted',
+        drm_type: 'Adrm',
+        license_response: 'bm90X3ZhbGlkX2Flcw==',
+        content_metadata: { content_url: { offline_url: 'https://example.invalid/book.aaxc' } }
+      }
+    })
+  });
+
+  try {
+    await assert.rejects(() => client.getContentLicense('B0TESTASIN1'), /AAXC voucher/);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+

@@ -10,6 +10,13 @@
  * 6. Audiobookshelf metadata.json generation
  * 
  * Exposes simple controls: Progress streaming, Cancel, and Retry.
+ *
+ * Source retention model (mirrors Libation's "RetainAaxFile" + .key sidecar):
+ *   {Title}.aaxc / {Title}.aax   Complete encrypted download, never deleted automatically
+ *   {Title}.license.json         Voucher key/iv (or activation bytes), chapters, size
+ *   {Title}.aaxc.part            In-flight download; renamed only after size verification
+ *   {Title}.converting.m4b       FFmpeg output; promoted to {Title}.m4b only after validation
+ * A retry re-uses a verified encrypted source + license sidecar without contacting Amazon.
  */
 
 const fs = require('fs');
@@ -45,6 +52,47 @@ class Downloader {
   }
 
   /**
+   * Computes all on-disk paths used for a book liberation.
+   * @param {string} targetDir
+   * @param {string} title
+   */
+  static getPaths(targetDir, title) {
+    const safeTitle = AbsOrganizer.sanitize(title);
+    return {
+      safeTitle,
+      aaxc: path.join(targetDir, `${safeTitle}.aaxc`),
+      aax: path.join(targetDir, `${safeTitle}.aax`),
+      licenseJson: path.join(targetDir, `${safeTitle}.license.json`),
+      workingM4b: path.join(targetDir, `${safeTitle}.converting.m4b`),
+      finalM4b: path.join(targetDir, `${safeTitle}.m4b`)
+    };
+  }
+
+  /**
+   * Returns a previously downloaded, size-verified encrypted source and its license
+   * sidecar, or null if none is usable.
+   * @param {ReturnType<typeof Downloader.getPaths>} paths
+   * @param {string} asin
+   */
+  static findRetainedSource(paths, asin) {
+    try {
+      if (!fs.existsSync(paths.licenseJson)) return null;
+      const lic = JSON.parse(fs.readFileSync(paths.licenseJson, 'utf8'));
+      if (lic.asin !== asin) return null;
+
+      const encryptedPath = lic.format === 'aaxc' ? paths.aaxc : paths.aax;
+      if (!fs.existsSync(encryptedPath)) return null;
+
+      const size = fs.statSync(encryptedPath).size;
+      if (!lic.sizeBytes || size !== lic.sizeBytes) return null;
+
+      return { encryptedPath, license: lic };
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /**
    * Starts downloading and liberating a book.
    * @param {string} asin 
    */
@@ -71,7 +119,9 @@ class Downloader {
       coverUrl: book.coverUrl
     });
 
-    let tempAudioPath = null;
+    let partPath = null;
+    let paths = null;
+    let encryptedPath = null;
     const profile = DeviceProfile.getProfile();
     const userAgent = profile?.userAgent || 'Audible/3.56.2 (iPhone; iOS 15.0; Scale/3.00)';
 
@@ -81,117 +131,152 @@ class Downloader {
       if (!fs.existsSync(targetDir)) {
         fs.mkdirSync(targetDir, { recursive: true });
       }
+      paths = Downloader.getPaths(targetDir, book.title);
 
-      // Step 1: Save Cover Image
-      let coverPath = null;
-      if (book.coverUrl) {
-        this.emitProgress(asin, { status: 'downloading', speedText: 'Saving cover art...', percentage: 5 });
-        coverPath = await AbsOrganizer.saveCoverImage(targetDir, book.coverUrl, userAgent);
+      // Step 1: Save Cover Image (skip if already present)
+      let coverPath = path.join(targetDir, 'cover.jpg');
+      if (!fs.existsSync(coverPath)) {
+        coverPath = null;
+        if (book.coverUrl) {
+          this.emitProgress(asin, { status: 'downloading', speedText: 'Saving cover art...', percentage: 5 });
+          coverPath = await AbsOrganizer.saveCoverImage(targetDir, book.coverUrl, userAgent);
+        }
       }
 
-      // Step 2: Ensure Activation Bytes exist (if not already retrieved)
-      let activationBytes = this.tokenManager.session?.activationBytes;
-      if (!activationBytes || activationBytes === '00000000') {
+      // Step 2: Re-use a retained encrypted source if one exists (no Amazon requests needed)
+      let licenseRecord;
+      let pdfPath = book.pdfPath || null;
+      const retained = Downloader.findRetainedSource(paths, asin);
+
+      if (retained) {
+        console.log(`[Downloader] Re-using retained encrypted source: ${retained.encryptedPath}`);
+        encryptedPath = retained.encryptedPath;
+        licenseRecord = retained.license;
         this.emitProgress(asin, {
           status: 'downloading',
-          percentage: 8,
-          speedText: 'Retrieving activation credentials...',
+          percentage: 85,
+          speedText: 'Using previously downloaded encrypted file...',
           title: book.title
         });
+      } else {
+        // Step 3: Request Official Content License & Download URL
+        this.emitProgress(asin, {
+          status: 'downloading',
+          percentage: 10,
+          speedText: 'Requesting download license...',
+          title: book.title
+        });
+
+        const license = await this.audibleClient.getContentLicense(asin);
+        const isAaxc = !!license.voucher;
+
+        // Activation bytes are only meaningful for legacy AAX (no voucher)
+        let activationBytes = null;
+        if (!isAaxc) {
+          activationBytes = this.tokenManager.session?.activationBytes;
+          if (!activationBytes || activationBytes === '00000000') {
+            this.emitProgress(asin, { status: 'downloading', percentage: 12, speedText: 'Retrieving activation credentials...', title: book.title });
+            activationBytes = await this.tokenManager.fetchActivationBytes();
+          }
+        }
+
+        encryptedPath = isAaxc ? paths.aaxc : paths.aax;
+        partPath = `${encryptedPath}.part`;
+
+        // Step 4: Download Companion PDF if enabled (from library metadata or license)
+        const pdfTargetUrl = book.pdfUrl || license.pdfUrl;
+        if (settings.downloadPdfs && pdfTargetUrl) {
+          this.emitProgress(asin, { status: 'downloading', speedText: 'Downloading companion PDF...', percentage: 14 });
+          pdfPath = (await AbsOrganizer.saveCompanionPdf(targetDir, pdfTargetUrl, book.title, userAgent)) || pdfPath;
+        }
+
+        // Step 5: Stream the complete encrypted file to disk (.part), then verify & rename
+        const audioResponse = await fetch(license.offlineUrl, {
+          headers: { 'User-Agent': userAgent },
+          signal: abortController.signal
+        });
+
+        if (!audioResponse.ok) {
+          throw new Error(`Failed to download audio stream from Audible CDN (${audioResponse.status}): ${audioResponse.statusText}`);
+        }
+
+        const headerLength = parseInt(audioResponse.headers.get('content-length'), 10) || 0;
+        const totalBytes = headerLength || license.sizeBytes || 0;
+        let downloadedBytes = 0;
+        let lastProgressUpdate = Date.now();
+        let lastBytes = 0;
+
+        const fileStream = fs.createWriteStream(partPath);
+        const reader = audioResponse.body.getReader();
+
         try {
-          activationBytes = await this.tokenManager.fetchActivationBytes();
-        } catch (actErr) {
-          console.warn('[Downloader] Activation bytes fetch error, continuing to license request:', actErr.message);
+          while (true) {
+            if (abortController.signal.aborted) {
+              throw new Error('Download cancelled by user.');
+            }
+
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            if (!fileStream.write(Buffer.from(value))) {
+              await new Promise((resolve) => fileStream.once('drain', resolve));
+            }
+            downloadedBytes += value.length;
+
+            const now = Date.now();
+            if (now - lastProgressUpdate >= 350) {
+              const timeDeltaSec = (now - lastProgressUpdate) / 1000;
+              const bytesDelta = downloadedBytes - lastBytes;
+              const speedBytesSec = timeDeltaSec > 0 ? bytesDelta / timeDeltaSec : 0;
+              const speedMbSec = (speedBytesSec / (1024 * 1024)).toFixed(1);
+              
+              const pct = totalBytes > 0 
+                ? Math.min(85, 15 + Math.round((downloadedBytes / totalBytes) * 70))
+                : 50;
+
+              this.emitProgress(asin, {
+                status: 'downloading',
+                percentage: pct,
+                bytesDownloaded: downloadedBytes,
+                totalBytes: totalBytes || downloadedBytes,
+                speedText: `${speedMbSec} MB/s`,
+                title: book.title,
+                coverUrl: book.coverUrl
+              });
+
+              lastProgressUpdate = now;
+              lastBytes = downloadedBytes;
+            }
+          }
+        } finally {
+          await new Promise((resolve) => fileStream.end(resolve));
         }
-      }
 
-      // Step 3: Request Official Content License & Download URL
-      this.emitProgress(asin, {
-        status: 'downloading',
-        percentage: 12,
-        speedText: 'Requesting download license...',
-        title: book.title
-      });
-
-      const license = await this.audibleClient.getContentLicense(asin);
-      const isAaxc = !!(license.voucher && license.voucher.key && license.voucher.iv);
-      const ext = isAaxc ? '.temp.aaxc' : '.temp.aax';
-      const safeTitle = AbsOrganizer.sanitize(book.title);
-      tempAudioPath = path.join(targetDir, `${safeTitle}${ext}`);
-      const finalM4bPath = path.join(targetDir, `${safeTitle}.m4b`);
-
-      // Step 4: Download Companion PDF if enabled (from library metadata or license)
-      let pdfPath = null;
-      const pdfTargetUrl = book.pdfUrl || license.pdfUrl;
-      if (settings.downloadPdfs && pdfTargetUrl) {
-        this.emitProgress(asin, { status: 'downloading', speedText: 'Downloading companion PDF...', percentage: 14 });
-        pdfPath = await AbsOrganizer.saveCompanionPdf(targetDir, pdfTargetUrl, book.title, userAgent);
-      }
-
-      // Step 5: Real Audio Stream Download with live byte/speed tracking
-      const audioResponse = await fetch(license.offlineUrl, {
-        headers: {
-          'User-Agent': userAgent
-        },
-        signal: abortController.signal
-      });
-
-      if (!audioResponse.ok) {
-        throw new Error(`Failed to download audio stream from Audible CDN (${audioResponse.status}): ${audioResponse.statusText}`);
-      }
-
-      const totalBytes = license.sizeBytes || parseInt(audioResponse.headers.get('content-length'), 10) || 0;
-      let downloadedBytes = 0;
-      let lastProgressUpdate = Date.now();
-      let lastBytes = 0;
-
-      const fileStream = fs.createWriteStream(tempAudioPath);
-      const reader = audioResponse.body.getReader();
-
-      try {
-        while (true) {
-          if (abortController.signal.aborted) {
-            throw new Error('Download cancelled by user.');
-          }
-
-          const { done, value } = await reader.read();
-          if (done) break;
-
-          if (!fileStream.write(Buffer.from(value))) {
-            await new Promise((resolve) => fileStream.once('drain', resolve));
-          }
-          downloadedBytes += value.length;
-
-          const now = Date.now();
-          if (now - lastProgressUpdate >= 350) {
-            const timeDeltaSec = (now - lastProgressUpdate) / 1000;
-            const bytesDelta = downloadedBytes - lastBytes;
-            const speedBytesSec = timeDeltaSec > 0 ? bytesDelta / timeDeltaSec : 0;
-            const speedMbSec = (speedBytesSec / (1024 * 1024)).toFixed(1);
-            
-            const pct = totalBytes > 0 
-              ? Math.min(85, 15 + Math.round((downloadedBytes / totalBytes) * 70))
-              : 50;
-
-            this.emitProgress(asin, {
-              status: 'downloading',
-              percentage: pct,
-              bytesDownloaded: downloadedBytes,
-              totalBytes: totalBytes || downloadedBytes,
-              speedText: `${speedMbSec} MB/s`,
-              title: book.title,
-              coverUrl: book.coverUrl
-            });
-
-            lastProgressUpdate = now;
-            lastBytes = downloadedBytes;
-          }
+        const writtenBytes = fs.statSync(partPath).size;
+        if (headerLength && writtenBytes !== headerLength) {
+          throw new Error(`Incomplete download: received ${writtenBytes} of ${headerLength} bytes.`);
         }
-      } finally {
-        await new Promise((resolve) => fileStream.end(resolve));
+
+        if (fs.existsSync(encryptedPath)) fs.unlinkSync(encryptedPath);
+        fs.renameSync(partPath, encryptedPath);
+        partPath = null;
+
+        // Persist decryption material next to the encrypted file (like Libation's .key file)
+        licenseRecord = {
+          asin,
+          format: isAaxc ? 'aaxc' : 'aax',
+          voucher: isAaxc ? { key: license.voucher.key, iv: license.voucher.iv } : null,
+          activationBytes: isAaxc ? null : activationBytes,
+          chapterInfo: license.chapterInfo || null,
+          sizeBytes: writtenBytes,
+          codec: license.codec,
+          downloadedAt: new Date().toISOString()
+        };
+        fs.writeFileSync(paths.licenseJson, JSON.stringify(licenseRecord, null, 2), 'utf8');
+        console.log(`[Downloader] Encrypted source saved: ${encryptedPath} (${writtenBytes} bytes, ${licenseRecord.format})`);
       }
 
-      // Step 6: Lossless Decryption & Tagging with FFmpeg
+      // Step 6: Lossless Decryption & Tagging with FFmpeg into a working file
       this.emitProgress(asin, {
         status: 'converting',
         percentage: 88,
@@ -199,7 +284,7 @@ class Downloader {
         title: book.title
       });
 
-      const rawChapters = license.chapterInfo?.chapters || book.chapters || [];
+      const rawChapters = licenseRecord.chapterInfo?.chapters || book.chapters || [];
       const normalizedChapters = Array.isArray(rawChapters) ? rawChapters.map(ch => ({
         title: ch.title || 'Chapter',
         startTime: ch.start_offset_ms !== undefined ? (ch.start_offset_ms / 1000) : (ch.startTime || 0),
@@ -210,40 +295,59 @@ class Downloader {
 
       book.chapters = normalizedChapters;
 
+      if (fs.existsSync(paths.workingM4b)) fs.unlinkSync(paths.workingM4b);
+
       await Decryptor.decryptToM4b({
-        inputPath: tempAudioPath,
-        outputPath: finalM4bPath,
-        activationBytes,
-        voucher: license.voucher,
+        inputPath: encryptedPath,
+        outputPath: paths.workingM4b,
+        activationBytes: licenseRecord.activationBytes,
+        voucher: licenseRecord.voucher,
         book,
         chapters: normalizedChapters,
         coverPath,
         onProgress: (p) => {
           this.emitProgress(asin, {
             status: 'converting',
-            percentage: 88 + Math.round(p.percent * 0.1),
+            percentage: 88 + Math.round(p.percent * 0.08),
             speedText: 'Writing M4B container & chapters...',
             title: book.title
           });
         }
       });
 
-      // Cleanup temp raw audio file
-      try {
-        if (fs.existsSync(tempAudioPath)) fs.unlinkSync(tempAudioPath);
-      } catch (_) {}
+      // Step 7: Validate decrypted audio before promoting the output
+      this.emitProgress(asin, {
+        status: 'converting',
+        percentage: 97,
+        speedText: 'Verifying decrypted audio...',
+        title: book.title
+      });
 
-      // Step 7: Generate Audiobookshelf metadata.json
+      const chapterTotalSec = normalizedChapters.reduce((sum, ch) => sum + (ch.duration || 0), 0);
+      const expectedSeconds = chapterTotalSec || book.runtimeSeconds || 0;
+      const check = await Decryptor.validateOutput(paths.workingM4b, expectedSeconds);
+      if (!check.ok) {
+        try { fs.unlinkSync(paths.workingM4b); } catch (_) {}
+        throw new Error(`Decrypted M4B failed verification: ${check.reason} Encrypted source kept at ${encryptedPath}`);
+      }
+
+      if (fs.existsSync(paths.finalM4b)) fs.unlinkSync(paths.finalM4b);
+      fs.renameSync(paths.workingM4b, paths.finalM4b);
+      console.log(`[Downloader] Verified M4B (${Math.round(check.durationSeconds)}s): ${paths.finalM4b}`);
+
+      // Step 8: Generate Audiobookshelf metadata.json
       if (settings.generateAbsMetadata) {
         AbsOrganizer.writeAbsMetadata(targetDir, book);
       }
 
-      // Step 8: Finalize Database State
+      // Step 9: Finalize Database State
       this.libraryDB.updateBookStatus(asin, 'downloaded', {
-        m4bPath: finalM4bPath,
-        pdfPath: pdfPath || book.pdfPath || null,
+        m4bPath: paths.finalM4b,
+        encryptedPath,
+        pdfPath: pdfPath || null,
         chapters: normalizedChapters,
-        downloadedAt: new Date().toISOString()
+        downloadedAt: new Date().toISOString(),
+        lastError: null
       });
 
       this.activeTasks.delete(asin);
@@ -253,15 +357,22 @@ class Downloader {
         percentage: 100,
         speedText: 'Completed',
         title: book.title,
-        m4bPath: finalM4bPath
+        m4bPath: paths.finalM4b
       });
 
       console.log(`[Downloader] Completed liberation for ${book.title}`);
     } catch (err) {
       this.activeTasks.delete(asin);
-      if (tempAudioPath && fs.existsSync(tempAudioPath)) {
-        try { fs.unlinkSync(tempAudioPath); } catch (_) {}
+
+      // Only incomplete artifacts are removed. A complete encrypted source and its
+      // license sidecar are always retained so conversion can be retried offline.
+      if (partPath && fs.existsSync(partPath)) {
+        try { fs.unlinkSync(partPath); } catch (_) {}
       }
+      if (paths && fs.existsSync(paths.workingM4b)) {
+        try { fs.unlinkSync(paths.workingM4b); } catch (_) {}
+      }
+
       const isCancelled = err.message.includes('cancelled');
       const finalStatus = isCancelled ? 'ready' : 'failed';
       

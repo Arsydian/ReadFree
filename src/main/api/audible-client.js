@@ -349,15 +349,27 @@ class AudibleClient {
     const metadata = license.content_metadata || {};
     const ref = metadata.content_reference || {};
     const offlineUrl = metadata.content_url?.offline_url;
-    const isAaxc = license.drm_type === 'Aaxc' || ref.content_format === 'AAXC';
 
     if (!offlineUrl) {
       throw new Error(`No offline download URL returned in Audible content license for ASIN ${asin}`);
     }
 
-    let voucher = license.voucher || null;
-    if (!voucher && isAaxc && license.license_response) {
+    // Per Libation (DownloadOptions.cs) and mkb79/audible: a licenserequest that carries an
+    // encrypted `license_response` voucher delivers an AAXC file (16-byte key + 16-byte IV).
+    // Audible reports drm_type "Adrm" for these, so drm_type can NOT be used to detect AAXC.
+    // Activation bytes do NOT decrypt AAXC; FFmpeg will silently emit still-encrypted frames.
+    let voucher = null;
+    if (license.license_response) {
+      if (!this.tokenManager.session?.userId && typeof this.tokenManager.ensureUserProfile === 'function') {
+        await this.tokenManager.ensureUserProfile();
+      }
       voucher = this.decryptVoucher(license.license_response, asin);
+      if (!voucher || !/^[0-9a-f]{32}$/i.test(voucher.key) || !/^[0-9a-f]{32}$/i.test(voucher.iv)) {
+        throw new Error(
+          `AAXC voucher for ${asin} could not be decrypted (missing or invalid account user_id/device data). ` +
+          'Aborting before download to avoid producing a corrupt M4B. Please sign out and sign in again.'
+        );
+      }
     }
 
     return {

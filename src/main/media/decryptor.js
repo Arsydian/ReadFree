@@ -60,6 +60,99 @@ class Decryptor {
   }
 
   /**
+   * Selects FFmpeg decryption arguments based on the encrypted container type.
+   * - .aaxc requires the voucher key/iv (16 bytes each, hex).
+   * - .aax requires the 4-byte account activation bytes.
+   * Returns an Error (instead of throwing) when the required key material is missing.
+   *
+   * @param {{ inputPath: string, voucher?: {key:string, iv:string}|null, activationBytes?: string|null }} opts
+   * @returns {string[]|Error}
+   */
+  static buildKeyArgs({ inputPath, voucher, activationBytes }) {
+    const isAaxc = /\.aaxc$/i.test(inputPath);
+    const hex32 = /^[0-9a-f]{32}$/i;
+
+    if (isAaxc) {
+      if (!voucher || !hex32.test(voucher.key || '') || !hex32.test(voucher.iv || '')) {
+        return new Error('AAXC file requires a valid voucher key and IV; activation bytes cannot decrypt AAXC.');
+      }
+      return ['-audible_key', voucher.key, '-audible_iv', voucher.iv];
+    }
+
+    if (!activationBytes || !/^[0-9a-f]{8}$/i.test(activationBytes) || activationBytes === '00000000') {
+      return new Error('AAX file requires valid 4-byte activation bytes.');
+    }
+    return ['-activation_bytes', activationBytes];
+  }
+
+  /**
+   * Runs a process and collects its output.
+   * @returns {Promise<{ code: number, stdout: string, stderr: string }>}
+   */
+  static runProcess(cmd, args) {
+    return new Promise((resolve, reject) => {
+      const proc = spawn(cmd, args, { windowsHide: true });
+      let stdout = '';
+      let stderr = '';
+      proc.stdout.on('data', (c) => { stdout += c.toString(); });
+      proc.stderr.on('data', (c) => { stderr += c.toString(); });
+      proc.on('error', (err) => reject(new Error(`Failed to spawn ${cmd}: ${err.message}`)));
+      proc.on('close', (code) => resolve({ code, stdout, stderr }));
+    });
+  }
+
+  /**
+   * Verifies that a converted M4B actually contains decodable, decrypted audio.
+   * FFmpeg exits 0 even when it copies still-encrypted AAC frames, so exit code alone
+   * is not proof of success. This decodes 30s windows at the start, middle and end and
+   * fails on any decoder error, then checks the duration against the expected runtime.
+   *
+   * @param {string} filePath Path to the M4B to validate
+   * @param {number} [expectedSeconds] Expected runtime from Audible metadata
+   * @returns {Promise<{ ok: boolean, reason?: string, durationSeconds?: number }>}
+   */
+  static async validateOutput(filePath, expectedSeconds = 0) {
+    if (!fs.existsSync(filePath)) return { ok: false, reason: 'Output file does not exist.' };
+
+    const probe = await this.runProcess('ffprobe', [
+      '-v', 'error', '-show_entries', 'format=duration', '-of', 'default=nw=1:nk=1', filePath
+    ]);
+    const durationSeconds = parseFloat(probe.stdout.trim());
+    if (probe.code !== 0 || !Number.isFinite(durationSeconds) || durationSeconds <= 0) {
+      return { ok: false, reason: `ffprobe could not read duration: ${probe.stderr.slice(-300)}` };
+    }
+
+    if (expectedSeconds > 0) {
+      const diff = Math.abs(durationSeconds - expectedSeconds);
+      const allowed = Math.max(expectedSeconds * 0.03, 90);
+      if (diff > allowed) {
+        return {
+          ok: false,
+          durationSeconds,
+          reason: `Duration ${Math.round(durationSeconds)}s differs from expected ${Math.round(expectedSeconds)}s by ${Math.round(diff)}s.`
+        };
+      }
+    }
+
+    const offsets = [0, Math.max(0, durationSeconds / 2 - 15), Math.max(0, durationSeconds - 35)];
+    for (const ss of offsets) {
+      const res = await this.runProcess('ffmpeg', [
+        '-hide_banner', '-v', 'error', '-ss', ss.toFixed(2), '-t', '30',
+        '-i', filePath, '-map', '0:a:0', '-f', 'null', '-'
+      ]);
+      if (res.code !== 0 || res.stderr.trim().length > 0) {
+        return {
+          ok: false,
+          durationSeconds,
+          reason: `Audio decode errors at ${Math.round(ss)}s (audio is still encrypted or corrupt): ${res.stderr.trim().split('\n')[0]}`
+        };
+      }
+    }
+
+    return { ok: true, durationSeconds };
+  }
+
+  /**
    * Decrypts input AAX/AAXC file to lossless M4B with embedded tags and cover.
    * @param {Object} options
    * @param {string} options.inputPath Path to input encrypted AAX or AAXC stream
@@ -95,13 +188,15 @@ class Decryptor {
       // Build FFmpeg command arguments
       const args = ['-y'];
 
-      // Decrypt using either AAXC voucher keys or AAX activation bytes
-      if (voucher && voucher.key && voucher.iv) {
-        args.push('-audible_key', voucher.key);
-        args.push('-audible_iv', voucher.iv);
-      } else if (activationBytes && activationBytes !== '00000000') {
-        args.push('-activation_bytes', activationBytes);
+      // Key selection is strictly tied to the container type. Applying activation bytes to an
+      // AAXC file does not fail in FFmpeg - it silently writes still-encrypted AAC frames.
+      const keyArgs = Decryptor.buildKeyArgs({ inputPath, voucher, activationBytes });
+      if (keyArgs instanceof Error) {
+        try { fs.unlinkSync(metaFile); } catch (_) {}
+        reject(keyArgs);
+        return;
       }
+      args.push(...keyArgs);
 
       // Input audio
       args.push('-i', inputPath);
