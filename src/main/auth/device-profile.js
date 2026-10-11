@@ -244,8 +244,13 @@ class DeviceProfile {
   }
 
   /**
-   * Computes SHA256withRSA:1.0 ADP signature for Audible API requests.
+   * Computes SHA256withRSA:1.0 ADP digital signature for Audible API requests.
    * Format: METHOD\nPATH_WITH_QUERY\nISO8601_DATE\nBODY\nADP_TOKEN
+   * 
+   * NOTE: This is an asymmetric digital signature over an HTTP request payload required by
+   * Amazon's Audible Device Messaging Service (DMS/ADP) protocol (x-adp-alg: SHA256withRSA:1.0),
+   * NOT a password hash. It cannot use bcrypt/scrypt/argon2 as Amazon's servers verify
+   * incoming requests with standard RSA-SHA256 against the registered device public key.
    * 
    * @param {Object} params
    * @param {string} params.method e.g. 'GET', 'POST'
@@ -266,9 +271,8 @@ class DeviceProfile {
 
     const payloadToSign = `${method.toUpperCase()}\n${pathWithQuery}\n${isoDate}\n${bodyStr}\n${adpToken}`;
 
-    const signer = crypto.createSign('RSA-SHA256');
-    signer.update(payloadToSign);
-    const signature = signer.sign(privateKeyPem, 'base64');
+    // Modern one-shot digital signature creation via crypto.sign
+    const signature = crypto.sign('RSA-SHA256', Buffer.from(payloadToSign, 'utf8'), privateKeyPem).toString('base64');
 
     return {
       signatureHeader: `${signature}:${isoDate}`,

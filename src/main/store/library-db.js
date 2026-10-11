@@ -33,12 +33,29 @@ class LibraryDB {
     if (!book || typeof book !== 'object') return false;
     if (book.isDemo === true || book.isPlaceholder === true) return true;
 
-    // Detect mock URLs or synthetic test directory paths
-    if (typeof book.pdfUrl === 'string' && book.pdfUrl.includes('example.com')) {
-      return true;
+    // Detect mock URLs or synthetic test directory paths with RFC-compliant hostname validation
+    if (typeof book.pdfUrl === 'string') {
+      try {
+        const parsed = new URL(book.pdfUrl);
+        if (parsed.hostname === 'example.com' || parsed.hostname.endsWith('.example.com')) {
+          return true;
+        }
+      } catch (_) {
+        // Not a URL
+      }
     }
-    if (typeof book.m4bPath === 'string' && (book.m4bPath.includes('Brandon Sanderson\\The Stormlight Archive') || book.m4bPath.includes('example.com'))) {
-      return true;
+    if (typeof book.m4bPath === 'string') {
+      if (book.m4bPath.includes('Brandon Sanderson\\The Stormlight Archive')) {
+        return true;
+      }
+      try {
+        const parsed = new URL(book.m4bPath);
+        if (parsed.hostname === 'example.com' || parsed.hostname.endsWith('.example.com')) {
+          return true;
+        }
+      } catch (_) {
+        // Local filesystem path, not a URL
+      }
     }
 
     // Detect known demo ASINs when populated with synthetic mock chapters or summaries
