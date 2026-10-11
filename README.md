@@ -3,8 +3,14 @@
 > **Clean, modern, glassmorphic Audible library backup & Audiobookshelf organizer.**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-1.3.4-cyan.svg)](package.json)
+[![Version](https://img.shields.io/badge/version-1.3.5-cyan.svg)](package.json)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-emerald.svg)](#)
+
+---
+
+<p align="center">
+  <img src="assets/hero.png" alt="ReadFree - Dark Glassmorphic Audible Library Backup & ABS Organizer" width="100%">
+</p>
 
 ---
 
